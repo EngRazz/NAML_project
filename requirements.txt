@@ -1,1 +1,4 @@
 gymnasium
+numpy
+matplotlib.pyplot
+tqdm
