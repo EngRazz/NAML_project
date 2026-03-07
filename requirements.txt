@@ -1,3 +1,4 @@
 gymnasium
 pygame
 numpy
+tqdm
