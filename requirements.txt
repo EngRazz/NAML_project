@@ -1,4 +1,5 @@
 gymnasium
 numpy
-matplotlib.pyplot
+matplotlib
+pygame
 tqdm
