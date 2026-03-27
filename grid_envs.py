@@ -1,7 +1,9 @@
+from typing import Optional
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 import math
+import pygame
 
 
 class GridFlagEnv(gym.Env):
@@ -21,7 +23,7 @@ class GridFlagEnv(gym.Env):
         4 = right
     """
 
-    metadata = {"render_modes": ["human"]}
+    metadata = {"render_modes": ["human", "rgb_array"]}
 
     CELL_SIZE  = 64
     HUD_HEIGHT = 80
@@ -34,7 +36,7 @@ class GridFlagEnv(gym.Env):
         self.grid_w, self.grid_h = grid_size
         self.max_step = max_step
         self.flag_value = flag_value
-        self.agent_pos = agent_start
+        self.agent_start = agent_start
         self.flag_cells = flag_cells
         
         # Attributes for rendering
@@ -63,7 +65,7 @@ class GridFlagEnv(gym.Env):
             4: (0, 1)
         }
 
-    def reset(self, *, seed=None, options=None):
+    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
 
         # Initialize pygame here so it's ready before the event loop
@@ -83,10 +85,11 @@ class GridFlagEnv(gym.Env):
                 self._font_big   = pygame.font.Font(None, 26)
                 self._font_small = pygame.font.Font(None, 18)
 
-        self.agent_pos = list(self.agent_pos)
+        self.agent_pos = list(self.agent_start)
         self.remaining_flags = set(self.flag_cells)
         self.current_step = 0
         self.total_reward = 0
+        self._completion_countdown = 0 # frames to keep rendering after collecting all flags
 
         obs = self._get_obs()
         info = {}
@@ -118,7 +121,11 @@ class GridFlagEnv(gym.Env):
         self.total_reward += reward
 
         # Episode ends when time runs out
-        terminated = False
+        if len(self.remaining_flags) == 0 and self._completion_countdown == 0:
+            self._completion_countdown = 20   # ~2 seconds at 10 FPS
+        if self._completion_countdown > 0:
+            self._completion_countdown -= 1
+        terminated = self._completion_countdown == 0 and len(self.remaining_flags) == 0
         truncated = self.current_step >= self.max_step
 
         obs = self._get_obs()
@@ -160,11 +167,6 @@ class GridFlagEnv(gym.Env):
         if self.render_mode not in ("human", "rgb_array"):
             return
 
-        try:
-            import pygame
-        except ImportError:
-            raise ImportError("pygame is required for rendering. Run: pip install pygame")
-
         CELL = self.CELL_SIZE
         W = self.grid_w * CELL
         H = self.grid_h * CELL + self.HUD_HEIGHT
@@ -186,17 +188,19 @@ class GridFlagEnv(gym.Env):
         COL_BAR_LOW     = (220,  80,  80)
 
         # Init pygame
-        if self._window is None and self.render_mode == "human":
+        if not hasattr(self, "_font_small"):          # fonts not yet created
             pygame.init()
-            pygame.display.set_caption("GridWorld")
-            self._window = pygame.display.set_mode((W, H))
-            self._clock = pygame.time.Clock()
             try:
                 self._font_big   = pygame.font.SysFont("monospace", 22, bold=True)
                 self._font_small = pygame.font.SysFont("monospace", 14)
             except Exception:
                 self._font_big   = pygame.font.Font(None, 26)
                 self._font_small = pygame.font.Font(None, 18)
+
+        if self._window is None and self.render_mode == "human":
+            pygame.display.set_caption("GridWorld")
+            self._window = pygame.display.set_mode((W, H))
+            self._clock = pygame.time.Clock()
 
         canvas = pygame.Surface((W, H))
         canvas.fill(COL_BG)
