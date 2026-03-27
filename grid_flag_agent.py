@@ -1,7 +1,7 @@
 from collections import defaultdict
 import numpy as np
 from tqdm import tqdm
-from grid_envs import GridFlagEnv
+from grid_flag_env import GridFlagEnv
 from gymnasium.wrappers import RecordVideo, RecordEpisodeStatistics
 
 # Helper: convert the env's dict observation into a hashable tuple key for the Q-table.

@@ -2,8 +2,8 @@ import numpy as np
 import gymnasium
 from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
 
-from grid_envs import GridFlagEnv
-from grid_agents import GridFlagAgent, obs_to_key
+from grid_flag_env import GridFlagEnv
+from grid_flag_agent import GridFlagAgent, obs_to_key
 
 # ── Environment config ────────────────────────────────────────────────────────
 
@@ -25,7 +25,7 @@ ENV_KWARGS = dict(
 
 gymnasium.register(
     id="GridFlagEnv",
-    entry_point="grid_envs:GridFlagEnv",
+    entry_point="grid_flag_env:GridFlagEnv",
     kwargs=ENV_KWARGS,
 )
 
