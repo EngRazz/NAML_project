@@ -27,21 +27,23 @@ class GridFlagEnv(gym.Env):
     HUD_HEIGHT = 80
     FPS = 10
 
-    def __init__(self, grid_size, max_steps, agent_start, flag_value, flag_cells, render_mode=None):
+    def __init__(self, grid_size, max_step, agent_start, flag_value, flag_cells, render_mode=None):
         super().__init__()
 
+        # Attributes of the environment
         self.grid_w, self.grid_h = grid_size
-        self.max_steps = max_steps
+        self.max_step = max_step
         self.flag_value = flag_value
         self.agent_pos = agent_start
         self.flag_cells = flag_cells
-
+        
+        # Attributes for rendering
         self.render_mode = render_mode
-
         self._window = None
         self._clock = None
         self._tick = 0
         self._collected_flash = {}
+        self.metadata['render_fps'] = self.FPS
 
         # Observation: a dict with agent position and binary flags for remaining rewards
         self.observation_space = spaces.Dict({
@@ -61,7 +63,7 @@ class GridFlagEnv(gym.Env):
             4: (0, 1)
         }
 
-    def reset(self, seed=None, options=None):
+    def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
 
         # Initialize pygame here so it's ready before the event loop
@@ -82,7 +84,7 @@ class GridFlagEnv(gym.Env):
                 self._font_small = pygame.font.Font(None, 18)
 
         self.agent_pos = list(self.agent_pos)
-        self.remaining_rewards = set(self.flag_cells)
+        self.remaining_flags = set(self.flag_cells)
         self.current_step = 0
         self.total_reward = 0
 
@@ -100,15 +102,15 @@ class GridFlagEnv(gym.Env):
         new_col = self.agent_pos[1] + dc
 
         # Clamp to grid boundaries (walls block movement)
-        new_row = max(0, min(self.GRID_H - 1, new_row))
-        new_col = max(0, min(self.GRID_W - 1, new_col))
+        new_row = max(0, min(self.grid_h - 1, new_row))
+        new_col = max(0, min(self.grid_w - 1, new_col))
         self.agent_pos = [new_row, new_col]
 
         # Check for reward collection
         pos_tuple = tuple(self.agent_pos)
-        if pos_tuple in self.remaining_rewards:
-            reward = self.REWARD_VALUE
-            self.remaining_rewards.remove(pos_tuple)
+        if pos_tuple in self.remaining_flags:
+            reward = self.flag_value
+            self.remaining_flags.remove(pos_tuple)
             self._collected_flash[pos_tuple] = 12
         else:
             reward = 0
@@ -117,30 +119,23 @@ class GridFlagEnv(gym.Env):
 
         # Episode ends when time runs out
         terminated = False
-        truncated = self.current_step >= self.MAX_STEPS
+        truncated = self.current_step >= self.max_step
 
         obs = self._get_obs()
         info = {
             "total_reward": self.total_reward,
-            "remaining_rewards": len(self.remaining_rewards),
+            "remaining_flags": len(self.remaining_flags),
             "steps": self.current_step,
         }
 
         return obs, reward, terminated, truncated, info
 
     def _get_obs(self):
-        grid = np.zeros((self.GRID_H, self.GRID_W), dtype=np.int32)
-
-        for (r, c) in self.remaining_rewards:
-            grid[r, c] = 2
-
-        grid[self.agent_pos[0], self.agent_pos[1]] = 1
-
-        return grid
-    
-    def get_state(self):
-        reward_flags = tuple(cell not in self.remaining_rewards for cell in self.REWARD_CELLS)
-        return {"agent_pos": tuple(self.agent_pos), "rewards_collected": reward_flags}
+        flags = np.array([1 if cell in self.remaining_flags else 0 for cell in self.flag_cells], dtype=np.int8)
+        return {
+            "agent": np.array(self.agent_pos, dtype=np.int32),
+            "flags": flags
+        }
     
     def close(self):
         if self._window is not None:
@@ -154,12 +149,12 @@ class GridFlagEnv(gym.Env):
     #         return
 
     #     symbols = {0: ".", 1: "A", 2: "R"}
-    #     print(f"\nStep: {self.current_step}/{self.MAX_STEPS}  |  Score: {self.total_reward}")
-    #     print("-" * (self.GRID_W * 2 + 1))
+    #     print(f"\nStep: {self.current_step}/{self.max_step}  |  Score: {self.total_reward}")
+    #     print("-" * (self.grid_w * 2 + 1))
     #     obs = self._get_obs()
     #     for row in obs:
     #         print("|" + " ".join(symbols[v] for v in row) + "|")
-    #     print("-" * (self.GRID_W * 2 + 1))
+    #     print("-" * (self.grid_w * 2 + 1))
 
     def render(self):
         if self.render_mode not in ("human", "rgb_array"):
@@ -171,8 +166,8 @@ class GridFlagEnv(gym.Env):
             raise ImportError("pygame is required for rendering. Run: pip install pygame")
 
         CELL = self.CELL_SIZE
-        W = self.GRID_W * CELL
-        H = self.GRID_H * CELL + self.HUD_HEIGHT
+        W = self.grid_w * CELL
+        H = self.grid_h * CELL + self.HUD_HEIGHT
 
         # Palette
         COL_BG          = (10,  12,  20)
@@ -207,14 +202,14 @@ class GridFlagEnv(gym.Env):
         canvas.fill(COL_BG)
 
         # --- Grid lines ---
-        for x in range(self.GRID_W + 1):
-            pygame.draw.line(canvas, COL_GRID_LINE, (x * CELL, 0), (x * CELL, self.GRID_H * CELL))
-        for y in range(self.GRID_H + 1):
+        for x in range(self.grid_w + 1):
+            pygame.draw.line(canvas, COL_GRID_LINE, (x * CELL, 0), (x * CELL, self.grid_h * CELL))
+        for y in range(self.grid_h + 1):
             pygame.draw.line(canvas, COL_GRID_LINE, (0, y * CELL), (W, y * CELL))
 
         # --- Subtle checkerboard shading ---
-        for r in range(self.GRID_H):
-            for c in range(self.GRID_W):
+        for r in range(self.grid_h):
+            for c in range(self.grid_w):
                 if (r + c) % 2 == 0:
                     s = pygame.Surface((CELL - 1, CELL - 1), pygame.SRCALPHA)
                     s.fill((255, 255, 255, 4))
@@ -223,7 +218,7 @@ class GridFlagEnv(gym.Env):
         t = self._tick
 
         # --- Reward cells (pulsing golden diamonds) ---
-        for (r, c) in self.remaining_rewards:
+        for (r, c) in self.remaining_flags:
             cx = c * CELL + CELL // 2
             cy = r * CELL + CELL // 2
             pulse = 0.5 + 0.5 * math.sin(t * 0.18 + r + c)
@@ -285,7 +280,7 @@ class GridFlagEnv(gym.Env):
         pygame.draw.circle(canvas, (220, 240, 255), (cx - 3, cy + bob - 3), 4)
 
         # --- HUD background ---
-        hud_y = self.GRID_H * CELL
+        hud_y = self.grid_h * CELL
         pygame.draw.rect(canvas, COL_HUD_BG, (0, hud_y, W, self.HUD_HEIGHT))
         pygame.draw.line(canvas, COL_HUD_BORDER, (0, hud_y), (W, hud_y), 2)
 
@@ -296,13 +291,13 @@ class GridFlagEnv(gym.Env):
         # Remaining targets
         canvas.blit(self._font_small.render("TARGETS", True, COL_TEXT), (160, hud_y + 10))
         canvas.blit(self._font_big.render(
-            f"{len(self.remaining_rewards)} / {len(self.REWARD_CELLS)}", True, COL_REWARD),
+            f"{len(self.remaining_flags)} / {len(self.flag_cells)}", True, COL_REWARD),
             (160, hud_y + 28))
 
         # Time progress bar
         bar_x, bar_y = 310, hud_y + 14
         bar_w, bar_h = W - bar_x - 20, 16
-        progress = self.current_step / self.MAX_STEPS
+        progress = self.current_step / self.max_step
         bar_color = COL_BAR_FG if progress < 0.7 else COL_BAR_LOW
 
         pygame.draw.rect(canvas, COL_BAR_BG, (bar_x, bar_y, bar_w, bar_h), border_radius=4)
@@ -311,11 +306,11 @@ class GridFlagEnv(gym.Env):
 
         canvas.blit(self._font_small.render("TIME", True, COL_TEXT), (bar_x, hud_y + 38))
         canvas.blit(self._font_small.render(
-            f"{self.current_step} / {self.MAX_STEPS}", True, COL_TEXT),
+            f"{self.current_step} / {self.max_step}", True, COL_TEXT),
             (bar_x + bar_w - 68, hud_y + 38))
 
         # --- Output ---
-        if self.render_mode == "human":
+        if self.render_mode == "human" and self._window is not None and self._clock is not None:
             self._window.blit(canvas, (0, 0))
             pygame.display.flip()
             self._clock.tick(self.FPS)
