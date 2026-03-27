@@ -2,6 +2,8 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 import math
+from typing import Optional
+import pygame
 
 
 class GridFlagEnv(gym.Env):
@@ -317,3 +319,308 @@ class GridFlagEnv(gym.Env):
 
         elif self.render_mode == "rgb_array":
             return np.transpose(np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2))
+
+class GridWorldMovingObstacle(gym.Env):
+    metadata = {
+        "render_modes": ["human", "rgb_array"],
+        "render_fps": 10
+    }
+    CELL_SIZE  = 64
+    HUD_HEIGHT = 60
+    FPS = 10
+ 
+    def __init__(self, size: int = 5, render_mode: str = "human"):
+        super().__init__()
+        self.size = size
+        self.render_mode = render_mode
+ 
+        self.agent_location = np.array([-1, -1], dtype=np.int32)
+        self.target_location = np.array([-1, -1], dtype=np.int32)
+        self.reward_function = np.zeros((size, size))
+ 
+        # rendering state
+        self._window = None
+        self._clock = None
+ 
+        self.observation_space = gym.spaces.Dict({
+            "agent": gym.spaces.Box(0, size - 1, shape=(2,), dtype=int),
+            "target": gym.spaces.Box(0, size - 1, shape=(2,), dtype=int),
+        })
+ 
+        self.action_space = gym.spaces.Discrete(4)
+ 
+        self.action_to_direction = {
+            0: np.array([0, 1]),    # right
+            1: np.array([-1, 0]),   # up
+            2: np.array([0, -1]),   # left
+            3: np.array([1, 0]),    # down
+        }
+ 
+    def get_obs(self):
+        return {"agent": self.agent_location, "target": self.target_location}
+ 
+    def get_info(self):
+        return {
+            "distance": np.linalg.norm(
+                self.agent_location - self.target_location, ord=1
+            )
+        }
+ 
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+ 
+        self.agent_location = np.array([4, 0], dtype=np.int32)
+        self.target_location = np.array([0, 4], dtype=np.int32)
+ 
+        self.reward_function = np.zeros((self.size, self.size))
+        self.reward_function[2, 4] = -10  # ostacolo iniziale
+ 
+        return self.get_obs(), self.get_info()
+ 
+    @staticmethod
+    def update_reward(reward_function):
+        new_map = np.zeros_like(reward_function)
+        rows, cols = reward_function.shape
+ 
+        for i in range(rows):
+            for j in range(cols):
+                if reward_function[i, j] == -10:
+                    new_j = max(0, j - 1)
+                    new_map[i, new_j] = -10
+ 
+        return new_map
+ 
+    def step(self, action):
+        direction = self.action_to_direction[action]
+        self.agent_location = np.clip(
+            self.agent_location + direction, 0, self.size - 1
+        )
+ 
+        terminated = bool(np.array_equal(self.agent_location, self.target_location))
+        truncated = False
+ 
+        current_reward = float(
+            self.reward_function[self.agent_location[0], self.agent_location[1]]
+        )
+ 
+        reward = 1.0 if terminated else current_reward
+ 
+        self.reward_function = self.update_reward(self.reward_function)
+ 
+        return self.get_obs(), reward, terminated, truncated, self.get_info()
+ 
+    def render_path(self, q_table: dict, max_steps: int = 50):
+        """
+        Stampa a terminale il percorso greedy dell'agente simulato dalla Q-table.
+ 
+        Usa questa funzione durante il training per visualizzare la policy corrente
+        senza aprire la finestra pygame.
+ 
+        Parameters
+        ----------
+        q_table : dict
+            Dizionario {obs_key: np.ndarray di shape (n_actions,)}.
+            La chiave attesa è una tupla (agent_row, agent_col, target_row, target_col).
+        max_steps : int
+            Limite di passi della simulazione greedy (default: 50).
+ 
+        Example
+        -------
+        # Dentro il training loop, ogni N episodi:
+        env.reset()
+        env.render_path(q_table)
+        """
+        ACTION_SYMBOLS = {0: "→", 1: "↑", 2: "←", 3: "↓"}
+ 
+        # ── Simula il percorso greedy ──────────────────────────────────────────
+        pos        = list(self.agent_location)
+        target     = tuple(self.target_location)
+        rew_map    = self.reward_function.copy()
+ 
+        path_cells : dict[tuple, str] = {}
+        visit_order: list[tuple]      = []
+        hit_obstacle = False
+        reached      = False
+        total_rew    = 0.0
+ 
+        for _ in range(max_steps):
+            obs_key = (pos[0], pos[1], target[0], target[1])
+ 
+            if obs_key in q_table:
+                action = int(np.argmax(q_table[obs_key]))
+            else:
+                action = 0  # default: right
+ 
+            path_cells[(pos[0], pos[1])] = ACTION_SYMBOLS[action]
+            visit_order.append((pos[0], pos[1]))
+ 
+            direction = self.action_to_direction[action]
+            pos = [
+                int(np.clip(pos[0] + direction[0], 0, self.size - 1)),
+                int(np.clip(pos[1] + direction[1], 0, self.size - 1)),
+            ]
+ 
+            cell_rew = float(rew_map[pos[0], pos[1]])
+            total_rew += cell_rew
+            if cell_rew == -10:
+                hit_obstacle = True
+ 
+            if tuple(pos) == target:
+                total_rew += 1.0
+                reached = True
+                break
+ 
+            rew_map = self.update_reward(rew_map)
+ 
+        end_pos   = tuple(pos)
+        start_pos = tuple(self.agent_location)
+ 
+        # Marca la posizione finale se non è già nel percorso
+        if end_pos not in path_cells:
+            path_cells[end_pos] = "★" if reached else "◉"
+ 
+        # ── Codici ANSI ────────────────────────────────────────────────────────
+        RESET  = "\033[0m"
+        BOLD   = "\033[1m"
+        DIM    = "\033[2m"
+        CYAN   = "\033[96m"
+        YELLOW = "\033[93m"
+        GREEN  = "\033[92m"
+        RED    = "\033[91m"
+ 
+        N     = self.size
+        steps = len(visit_order)
+        status = f"{GREEN}GOAL raggiunto!{RESET}" if reached else (
+                 f"{RED}ostacolo colpito{RESET}" if hit_obstacle else
+                 f"{YELLOW}timeout{RESET}")
+ 
+        print(f"\n{BOLD}{'─' * (N * 4 + 6)}{RESET}")
+        print(
+            f"{BOLD}  PERCORSO GREEDY  "
+            f"steps: {steps}/{max_steps}  "
+            f"reward: {YELLOW}{total_rew:.1f}{RESET}  "
+            f"{status}"
+        )
+        print(f"{BOLD}{'─' * (N * 4 + 6)}{RESET}")
+ 
+        # Header colonne
+        print(DIM + "     " + "".join(f"{c:^4}" for c in range(N)) + RESET)
+ 
+        # Ostacoli nella posizione attuale della simulazione
+        obstacles = set()
+        for r in range(N):
+            for c in range(N):
+                if rew_map[r, c] == -10:
+                    obstacles.add((r, c))
+ 
+        for r in range(N):
+            row_str = f"{DIM}{r:>3} |{RESET}"
+            for c in range(N):
+                cell = (r, c)
+                sym  = path_cells.get(cell)
+ 
+                if cell == start_pos and cell == end_pos:
+                    row_str += f"{BOLD}{CYAN}  ⬡ {RESET}"
+                elif cell == start_pos:
+                    row_str += f"{BOLD}{CYAN}  S {RESET}"
+                elif cell == target:
+                    color = GREEN if reached else YELLOW
+                    row_str += f"{BOLD}{color}  T {RESET}"    # Target
+                elif cell == end_pos and not reached:
+                    row_str += f"{BOLD}{RED}  E {RESET}"      # End (non al goal)
+                elif cell in obstacles:
+                    row_str += f"{RED}  ▓ {RESET}"            # ostacolo
+                elif sym is not None:
+                    row_str += f"{CYAN}  {sym} {RESET}"
+                else:
+                    row_str += f"{DIM}  . {RESET}"
+ 
+            print(row_str)
+ 
+        print(f"{DIM}{'─' * (N * 4 + 6)}{RESET}")
+        print(
+            f"  {DIM}S{RESET}=start  "
+            f"{GREEN}T{RESET}=target  "
+            f"{RED}▓{RESET}=ostacolo  "
+            f"{CYAN}↑↓←→{RESET}=percorso\n"
+        )
+ 
+    def render(self):
+        if self.render_mode not in ("human", "rgb_array"):
+            return
+ 
+ 
+        CELL = self.CELL_SIZE
+        W = self.size * CELL
+        H = self.size * CELL + self.HUD_HEIGHT
+ 
+        if self._window is None:
+            pygame.init()
+            if self.render_mode == "human":
+                self._window = pygame.display.set_mode((W, H))
+                pygame.display.set_caption("GridWorld Moving Obstacle")
+                self._clock = pygame.time.Clock()
+ 
+            self._font = pygame.font.Font(None, 24)
+ 
+        canvas = pygame.Surface((W, H))
+        canvas.fill((20, 20, 30))
+ 
+        # --- grid ---
+        for x in range(self.size + 1):
+            pygame.draw.line(canvas, (50, 50, 70), (x * CELL, 0), (x * CELL, self.size * CELL))
+        for y in range(self.size + 1):
+            pygame.draw.line(canvas, (50, 50, 70), (0, y * CELL), (W, y * CELL))
+ 
+        # --- obstacle ---
+        for r in range(self.size):
+            for c in range(self.size):
+                if self.reward_function[r, c] == -10:
+                    pygame.draw.rect(
+                        canvas,
+                        (200, 60, 60),
+                        (c * CELL + 5, r * CELL + 5, CELL - 10, CELL - 10),
+                    )
+ 
+        # --- target ---
+        tr, tc = self.target_location
+        pygame.draw.rect(
+            canvas,
+            (60, 200, 60),
+            (tc * CELL + 10, tr * CELL + 10, CELL - 20, CELL - 20),
+        )
+ 
+        # --- agent ---
+        ar, ac = self.agent_location
+        pygame.draw.circle(
+            canvas,
+            (80, 160, 255),
+            (ac * CELL + CELL // 2, ar * CELL + CELL // 2),
+            15,
+        )
+ 
+        # --- HUD ---
+        hud_y = self.size * CELL
+        pygame.draw.rect(canvas, (30, 30, 50), (0, hud_y, W, self.HUD_HEIGHT))
+ 
+        text = self._font.render(
+            f"Distance: {self.get_info()['distance']:.1f}", True, (200, 200, 240)
+        )
+        canvas.blit(text, (10, hud_y + 20))
+ 
+        # --- output ---
+        if self.render_mode == "human":
+            self._window.blit(canvas, (0, 0))
+            pygame.display.flip()
+            self._clock.tick(self.FPS)
+ 
+        else:  # rgb_array
+            return np.transpose(
+                np.array(pygame.surfarray.pixels3d(canvas)), (1, 0, 2)
+            )
+ 
+    def close(self):
+        if self._window is not None:
+            import pygame
+            pygame.quit()
+            self._window = None

@@ -29,6 +29,7 @@ try:
     env = gymnasium.make("GridFlagEnv-v0")
     check_env(env)
     print("Environment passes all checks!")
+    
 except Exception as e:
     print(f"Environment has issues: {e}")
 
