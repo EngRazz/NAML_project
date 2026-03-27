@@ -116,7 +116,7 @@ class GridFlagEnv(gym.Env):
             self.remaining_flags.remove(pos_tuple)
             self._collected_flash[pos_tuple] = 12
         else:
-            reward = 0
+            reward = -0.5
 
         self.total_reward += reward
 

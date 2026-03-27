@@ -1,9 +1,6 @@
 import numpy as np
 import gymnasium
-from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
-
-from grid_flag_env import GridFlagEnv
-from grid_flag_agent import GridFlagAgent, obs_to_key
+from grid_flag_agent import GridFlagAgent
 
 # ── Environment config ────────────────────────────────────────────────────────
 
@@ -19,7 +16,7 @@ ENV_KWARGS = dict(
     grid_size=(10, 10),
     max_step=100,
     agent_start=(5, 5),
-    flag_value=1,
+    flag_value=10,
     flag_cells=FLAG_CELLS,
 )
 
@@ -64,8 +61,6 @@ agent.train_recorded(
     record_every=RECORD_EVERY,
     log_every=500,
 )
-
-agent.plot_training(window=100)
 
 # ── Evaluation ────────────────────────────────────────────────────────────────
 
