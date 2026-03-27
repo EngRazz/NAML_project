@@ -1,7 +1,7 @@
 import gymnasium
 
-from grid_envs import GridFlagEnv
-from grid_agents import GridFlagAgent
+from grid_flag_env import GridFlagEnv
+from grid_flag_agent import GridFlagAgent
 from gymnasium.utils.env_checker import check_env
 
 FLAG_CELLS = [
@@ -15,7 +15,7 @@ FLAG_CELLS = [
 # register the environment with Gymnasium
 gymnasium.register(
     id="GridFlagEnv-v0",
-    entry_point="grid_envs:GridFlagEnv",
+    entry_point="grid_flag_env:GridFlagEnv",
     kwargs={
         "grid_size": (10, 10),
         "max_step": 100,
