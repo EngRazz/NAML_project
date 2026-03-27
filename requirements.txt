@@ -3,3 +3,5 @@ numpy
 matplotlib
 pygame
 tqdm
+typing
+MoviePy
