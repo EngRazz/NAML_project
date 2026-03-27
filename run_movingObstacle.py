@@ -1,7 +1,7 @@
 import gymnasium as gym
 
-from grid_envs import GridWorldMovingObstacle
-from grid_agents import GridWorldMovingObstacleAgent
+from grid_envs2 import GridWorldMovingObstacle
+from grid_agent2 import GridWorldMovingObstacleAgent
 from gymnasium.utils.env_checker import check_env
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -17,7 +17,7 @@ FLAG_CELLS = [
 # register the environment with Gymnasium
 gym.register(
     id = "GridWorldMovingObstacle-v0",
-    entry_point = "grid_envs:GridWorldMovingObstacle",
+    entry_point = "grid_envs2:GridWorldMovingObstacle",
     max_episode_steps = 500, #prevent infinite episodes
 )
 
