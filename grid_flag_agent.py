@@ -3,6 +3,7 @@ import numpy as np
 from tqdm import tqdm
 from grid_flag_env import GridFlagEnv
 from gymnasium.wrappers import RecordVideo, RecordEpisodeStatistics
+import matplotlib.pyplot as plt
 
 # Helper: convert the env's dict observation into a hashable tuple key for the Q-table.
 # The env returns {"agent": [row, col], "flags": [0/1, ...]}.
@@ -135,15 +136,16 @@ class GridFlagAgent:
         env = RecordEpisodeStatistics(env, buffer_length=num_episodes)
 
         # Store stats for plotting
-        self.episode_rewards = []
-        self.episode_lengths = []
-        self.epsilons        = []
+        episode_rewards = []
+        episode_lengths = []
+        epsilons        = []
 
         for ep in tqdm(range(num_episodes), desc="Training"):
             obs_dict, _ = env.reset()
             obs = obs_to_key(obs_dict)
             terminated = False
             truncated  = False
+            episode_reward = 0
 
             while not terminated and not truncated:
                 action = self.get_action(obs)
@@ -151,16 +153,19 @@ class GridFlagAgent:
                 next_obs = obs_to_key(next_obs_dict)
                 self.update(obs, action, reward, terminated or truncated, next_obs)
                 obs = next_obs
+                
+                # Record stats
+                episode_reward += reward
 
             self.decay_epsilon()
 
             # Record stats
-            self.episode_rewards.append(list(env.return_queue)[-1])
-            self.episode_lengths.append(list(env.length_queue)[-1])
-            self.epsilons.append(self.epsilon)
+            episode_rewards.append(episode_reward)
+            episode_lengths.append(list(env.length_queue)[-1])
+            epsilons.append(self.epsilon)
 
             if (ep + 1) % log_every == 0:
-                recent = self.episode_rewards[-100:]
+                recent = episode_rewards[-100:]
                 avg = np.mean(recent)
                 print(f"  Episode {ep + 1:>5} | "
                     f"avg reward (last 100): {avg:.2f} | "
@@ -168,65 +173,43 @@ class GridFlagAgent:
 
         env.close()
 
-    def plot_training(self, window: int = 100):
-        """
-        Plot training curves: rolling reward, episode length, and epsilon decay.
-        
-        Args:
-            window: Rolling average window size.
-        """
-        import matplotlib.pyplot as plt
-
-        if not hasattr(self, "episode_rewards"):
-            print("No training data found. Run train_recorded() first.")
-            return
-
-        rewards = np.array(self.episode_rewards)
-        lengths = np.array(self.episode_lengths)
-        eps     = np.array(self.epsilons)
+        rewards  = np.array(episode_rewards)
+        lengths  = np.array(episode_lengths)
         episodes = np.arange(1, len(rewards) + 1)
 
-        # Rolling average
-        def rolling(arr, w):
-            return np.convolve(arr, np.ones(w) / w, mode="valid")
-
-        fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=False)
+        fig, axes = plt.subplots(2, 1, figsize=(16, 8))
         fig.suptitle("Training Curves", fontsize=14, fontweight="bold")
 
-        # --- Reward ---
-        ax = axes[0]
-        ax.plot(episodes, rewards, alpha=0.25, color="steelblue", label="Episode reward")
-        if len(rewards) >= window:
-            ax.plot(episodes[window - 1:], rolling(rewards, window),
-                    color="steelblue", linewidth=2, label=f"Rolling mean ({window})")
-        ax.axhline(len(self.env.unwrapped.flag_cells), color="gold",
-                linestyle="--", linewidth=1, label="Max reward")
-        ax.set_ylabel("Reward")
-        ax.legend(fontsize=8)
-        ax.grid(alpha=0.3)
+        axes[0].plot(episodes, rewards, color="steelblue", alpha=0.6, marker="o", markersize=3, label="Episode reward")
+        axes[0].axhline(len(self.env.unwrapped.flag_cells) * self.env.unwrapped.flag_value, color="gold",
+                        linestyle="--", linewidth=1, label="Max reward")
+        
+        ar_rewards = list()
+        for i in range(100, len(rewards)):
+            ar_rewards.append(np.mean(rewards[i-100:i]))
+        axes[0].plot(episodes[100:], ar_rewards, color="orange", alpha=0.9, marker="o", markersize=3, label="Mean(100) reward")
+        
+        axes[0].set_ylabel("Reward")
+        axes[0].legend(fontsize=8)
+        axes[0].grid(alpha=0.3)
 
-        # --- Episode length ---
-        ax = axes[1]
-        ax.plot(episodes, lengths, alpha=0.25, color="coral", label="Episode length")
-        if len(lengths) >= window:
-            ax.plot(episodes[window - 1:], rolling(lengths, window),
-                    color="coral", linewidth=2, label=f"Rolling mean ({window})")
-        ax.set_ylabel("Steps")
-        ax.legend(fontsize=8)
-        ax.grid(alpha=0.3)
+        axes[1].plot(episodes, lengths, color="coral", alpha=0.8, marker="o", markersize=3, label="Episode steps")
+        axes[1].axhline(min(lengths), color="purple", linestyle="--", linewidth=1, label="Min steps")
+        axes[1].axhline(lengths[-1], color="green" if min(lengths) == lengths[-1] else "red", linestyle="--", linewidth=1, label="Last steps")
 
-        # --- Epsilon ---
-        ax = axes[2]
-        ax.plot(episodes, eps, color="mediumseagreen", linewidth=2)
-        ax.set_ylabel("Epsilon")
-        ax.set_xlabel("Episode")
-        ax.grid(alpha=0.3)
+        ar_lengths = list()
+        for i in range(100, len(lengths)):
+            ar_lengths.append(np.mean(lengths[i-100:i]))
+        axes[1].plot(episodes[100:], ar_lengths, color="purple", alpha=0.9, marker="o", markersize=3, label="Mean(100) steps")
+
+        axes[1].set_ylabel("Steps")
+        axes[1].legend(fontsize=8)
+        axes[1].grid(alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig("training_curves.png", dpi=150)
-        plt.show()
-        print("Plot saved to training_curves.png")
-    
+        plt.savefig("./images/GridFlag_training_curves.png", dpi=150)
+        print("Plot saved to GridFlag_training_curves.png")
+
     def eval_recorded(
         self,
         video_folder: str = "videos/evaluation",
