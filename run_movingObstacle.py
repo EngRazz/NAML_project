@@ -6,6 +6,7 @@ from gymnasium.utils.env_checker import check_env
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
+import pygame
 FLAG_CELLS = [
     (1, 2),
     (3, 7),
@@ -29,7 +30,7 @@ final_epsilon = 0.01
 
 
 
-env = gym.make("GridWorldMovingObstacle-v0")
+env = gym.make("GridWorldMovingObstacle-v0", render_mode="human")
 check_env(env)
 print("Environment passes all checks!")
 env = gym.wrappers.RecordEpisodeStatistics(env, buffer_length=n_episodes)
@@ -121,11 +122,32 @@ def plot_training():
 
 
 try:
-    env.render()
-    #train()
-    #plot_training()
-
+    # 1. Reset dell'ambiente per inizializzare le posizioni
+    obs, info = env.reset()
     
-except Exception as e:
-    print(f"Environment has issues: {e}")
+    print("Finestra aperta. Premi la 'X' della finestra per chiudere.")
+    
+    # 2. Loop infinito per mantenere la finestra attiva
+    running = True
+    while running:
+        # --- GESTIONE EVENTI (Fondamentale per non far crashare la finestra) ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+        
+        # --- LOGICA (opzionale: muovi l'agente a caso per testare) ---
+        # action = env.action_space.sample()
+        # obs, reward, terminated, truncated, info = env.step(action)
+        # if terminated or truncated:
+        #     env.reset()
 
+        # --- RENDERING ---
+        env.render()
+        
+    # 3. Pulizia finale
+    env.close()
+
+except Exception as e:
+    print(f"Errore durante l'esecuzione: {e}")
+    import traceback
+    traceback.print_exc()
