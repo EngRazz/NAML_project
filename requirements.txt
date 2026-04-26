@@ -5,3 +5,4 @@ pygame
 tqdm
 typing
 MoviePy
+torch
