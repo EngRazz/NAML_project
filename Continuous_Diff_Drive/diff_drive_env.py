@@ -49,7 +49,7 @@ class DiffDriveEnv(gym.Env):
         super().__init__()
 
         self.room_w, self.room_h = room_size
-        self.obstacles       = obstacles or []
+        self.obstacles       = list(obstacles) if obstacles is not None else []
         self.random_obst     = random_obst
         self.robot_start     = np.array(robot_start, dtype=np.float32)
         self.goal_pos        = np.array(goal_pos,    dtype=np.float32)
@@ -79,22 +79,38 @@ class DiffDriveEnv(gym.Env):
             dtype= np.float32,
         )
 
+    @staticmethod
+    def _point_rect_distance(point, rect):
+        px, py = float(point[0]), float(point[1])
+        rx, ry, rw, rh = rect
+        cx = max(rx, min(px, rx + rw))
+        cy = max(ry, min(py, ry + rh))
+        return math.sqrt((px - cx) ** 2 + (py - cy) ** 2)
+
     def _sample_obstacles(self):
         obstacles = []
         protected = [self.robot_start, self.goal_pos]
+        clearance = self.robot_radius + 0.5
+        margin = self.robot_radius + 0.2
+
         for _ in range(3):
-            for _ in range(20):   # max attempts
-                x = np.random.uniform(1.0, 7.0)
-                y = np.random.uniform(1.0, 7.0)
-                w = np.random.uniform(0.5, 2.0)
-                h = np.random.uniform(0.3, 1.5)
-                # reject if too close to start or goal
+            for _ in range(100):   # max attempts
+                max_w = max(0.5, min(2.0, self.room_w - 2 * margin))
+                max_h = max(0.3, min(1.5, self.room_h - 2 * margin))
+                w = float(self.np_random.uniform(0.5, max_w))
+                h = float(self.np_random.uniform(0.3, max_h))
+                x_hi = max(margin, self.room_w - margin - w)
+                y_hi = max(margin, self.room_h - margin - h)
+                x = float(self.np_random.uniform(margin, x_hi))
+                y = float(self.np_random.uniform(margin, y_hi))
+                rect = (x, y, w, h)
+                # Reject obstacles that block the start or goal clearance zone.
                 too_close = any(
-                    x < px < x + w and y < py < y + h
-                    for (px, py) in protected
+                    self._point_rect_distance(point, rect) < clearance
+                    for point in protected
                 )
                 if not too_close:
-                    obstacles.append((x, y, w, h))
+                    obstacles.append(rect)
                     break
         return obstacles
 
@@ -257,13 +273,14 @@ class DiffDriveEnv(gym.Env):
     # Render
     # ------------------------------------------------------------------
 
-    def _init_pygame(self):
+    def _init_pygame(self, create_window=True):
         pygame.init()
         W = int(self.room_w * self.RENDER_SCALE)
         H = int(self.room_h * self.RENDER_SCALE) + self.HUD_HEIGHT
-        pygame.display.set_caption("DiffDrive")
-        self._window = pygame.display.set_mode((W, H))
-        self._clock  = pygame.time.Clock()
+        if create_window:
+            pygame.display.set_caption("DiffDrive")
+            self._window = pygame.display.set_mode((W, H))
+            self._clock  = pygame.time.Clock()
         try:
             self._font = pygame.font.SysFont("monospace", 15, bold=True)
         except Exception:
@@ -296,9 +313,9 @@ class DiffDriveEnv(gym.Env):
             return int(x * S), int((self.room_h - y) * S)
 
         if not hasattr(self, "_font") or not pygame.get_init():
-            self._init_pygame()
+            self._init_pygame(create_window=self.render_mode == "human")
         if self._window is None and self.render_mode == "human":
-            self._init_pygame()
+            self._init_pygame(create_window=True)
 
         canvas = pygame.Surface((W, TH))
         canvas.fill(COL_BG)
@@ -368,5 +385,7 @@ class DiffDriveEnv(gym.Env):
     def close(self):
         if self._window is not None:
             pygame.display.quit()
+        if pygame.get_init():
             pygame.quit()
-            self._window = None
+        self._window = None
+        self._clock = None
