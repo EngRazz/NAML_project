@@ -84,10 +84,10 @@ class DiffDriveEnv(gym.Env):
         protected = [self.robot_start, self.goal_pos]
         for _ in range(3):
             for _ in range(20):   # max attempts
-                x = np.random.uniform(1.0, 7.0)
-                y = np.random.uniform(1.0, 7.0)
-                w = np.random.uniform(0.5, 2.0)
-                h = np.random.uniform(0.3, 1.5)
+                x = np.random.uniform(0.0, 9.0)
+                y = np.random.uniform(0.0, 9.0)
+                w = np.random.uniform(1.0, self.room_size[0]-x)
+                h = np.random.uniform(1.0, self.room_size[1]-y)
                 # reject if too close to start or goal
                 too_close = any(
                     x < px < x + w and y < py < y + h #check if initial or goal are inside the obstacle --> reject the obstacle
