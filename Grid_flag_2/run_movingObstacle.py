@@ -1,8 +1,8 @@
 import gymnasium as gym
 from gymnasium.wrappers import RecordVideo, RecordEpisodeStatistics
 from gymnasium.utils.env_checker import check_env
-from grid_envs2 import GridWorldMovingObstacle
-import grid_agent2
+from Grid_flag_2.grid_envs2 import GridWorldMovingObstacle
+import Grid_flag_2.grid_agent2 as grid_agent2
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
