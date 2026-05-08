@@ -34,10 +34,12 @@ class Actor(nn.Module):
         )
 
         # Register action scaling as buffers so they move with .to(device)
+        # register_buffer saves the scale and the bias as constant in the class, will be visible even when change device for computation
         action_scale  = torch.FloatTensor((action_high - action_low) / 2.0)
         action_bias   = torch.FloatTensor((action_high + action_low) / 2.0)
         self.register_buffer("action_scale", action_scale)
         self.register_buffer("action_bias",  action_bias)
+        #nb actual_action = (output of the network) * action_scale + action_bias --> adapt [-1,1] rage into our range of possible actions
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """
@@ -47,6 +49,8 @@ class Actor(nn.Module):
             action: (batch_size, action_dim) — scaled to [action_low, action_high]
         """
         return self.net(obs) * self.action_scale + self.action_bias
+        #nb actual_action = (output of the network) * action_scale + action_bias --> adapt [-1,1] rage into our range of possible actions
+
 
 
 class Critic(nn.Module):
@@ -92,9 +96,9 @@ class Critic(nn.Module):
         Returns:
             q_value: (batch_size, 1)
         """
-        obs_features = self.obs_layer(obs)
-        x = torch.cat([obs_features, action], dim=1)
-        return self.joint_net(x)
+        obs_features = self.obs_layer(obs) #compute features from the states
+        x = torch.cat([obs_features, action], dim=1) #concatenate result with the action chosed
+        return self.joint_net(x) #evaluate the action on the extracted featur from observations
 
 
 class OUNoise:

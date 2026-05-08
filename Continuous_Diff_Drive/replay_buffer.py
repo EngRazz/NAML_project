@@ -58,7 +58,7 @@ class ReplayBuffer:
             A dict with keys: states, actions, rewards, next_states, dones.
             All values are numpy float32 arrays of shape (batch_size, dim).
         """
-        assert self.size >= batch_size, (
+        assert self.size >= batch_size, ( #why not just >?
             f"Buffer has only {self.size} transitions, cannot sample {batch_size}."
         )
         idx = np.random.randint(0, self.size, size=batch_size)

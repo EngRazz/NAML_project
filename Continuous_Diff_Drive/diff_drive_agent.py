@@ -41,7 +41,7 @@ class DiffDriveAgent:
         batch_size:   int   = 256,
         buffer_size:  int   = 100_000,
         hidden_dim:   int   = 256,
-        warmup_steps: int   = 1_000,      # random actions before training starts
+        warmup_steps: int   = 1_000,      # random actions before training starts --> to fill the buffer
         device:       str   = "cpu",
     ):
         self.env        = env
@@ -67,7 +67,7 @@ class DiffDriveAgent:
         # Target networks start as exact copies
         self.actor_target  = Actor(obs_dim, action_dim, action_low, action_high, hidden_dim).to(self.device)
         self.critic_target = Critic(obs_dim, action_dim, hidden_dim).to(self.device)
-        self.actor_target.load_state_dict(self.actor.state_dict())
+        self.actor_target.load_state_dict(self.actor.state_dict()) #che fa?
         self.critic_target.load_state_dict(self.critic.state_dict())
 
         # Initialise weights
@@ -88,7 +88,7 @@ class DiffDriveAgent:
     # ------------------------------------------------------------------
     # Action selection
     # ------------------------------------------------------------------
-
+    
     def select_action(self, obs: np.ndarray, add_noise: bool = True) -> np.ndarray:
         """
         Choose an action given an observation.
@@ -100,10 +100,10 @@ class DiffDriveAgent:
             # Warm-up: purely random actions to fill the replay buffer
             return self.env.action_space.sample()
 
-        obs_t  = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
-        action = self.actor(obs_t).detach().cpu().numpy()[0]
+        obs_t  = torch.FloatTensor(obs).unsqueeze(0).to(self.device) #transform the obs in tensor, with unsqueeze change the dimension in (1,obs.shape[0]) since tf use this format and move data to the device with the network
+        action = self.actor(obs_t).detach().cpu().numpy()[0] #get answer from network, detach to avoid backprog, cpu to move data in cpu (maybe where moved in other device)and numpy to convert in np.array. [0] to invert unsqueeze 
 
-        if add_noise:
+        if add_noise: 
             # noise  = np.random.normal(0, self.noise_std, size=action.shape)
             # noise  = np.clip(noise, -self.noise_clip, self.noise_clip)
             noise  = self.ou_noise.sample()
@@ -119,12 +119,14 @@ class DiffDriveAgent:
         """Sample a batch from the buffer and update both networks."""
         batch = self.buffer.sample(self.batch_size)
 
+        # Prepare the data of the batch to be used by the tensors
         states      = torch.FloatTensor(batch["states"]).to(self.device)
         actions     = torch.FloatTensor(batch["actions"]).to(self.device)
         rewards     = torch.FloatTensor(batch["rewards"]).to(self.device)
         next_states = torch.FloatTensor(batch["next_states"]).to(self.device)
         dones       = torch.FloatTensor(batch["dones"]).to(self.device)
 
+        # -- Compute Bellman target from the Critic Target and Actor Target networks -----------
         with torch.no_grad():
             # Target actor selects the next action
             next_actions = self.actor_target(next_states)
@@ -134,12 +136,12 @@ class DiffDriveAgent:
             target_q = rewards + self.discount * (1.0 - dones) * target_q
 
         # ── Critic update ─────────────────────────────────────────────
-        current_q   = self.critic(states, actions)
-        critic_loss = F.mse_loss(current_q, target_q)
+        current_q   = self.critic(states, actions) #predict of current critic
+        critic_loss = F.mse_loss(current_q, target_q) #loss of current critic wrt target value
 
-        self.critic_optim.zero_grad()
-        critic_loss.backward()
-        self.critic_optim.step()
+        self.critic_optim.zero_grad() #clean-up the old gradients
+        critic_loss.backward() #compute new gradient
+        self.critic_optim.step() #compute new weigths
 
         # ── Actor update ──────────────────────────────────────────────
         # Maximise Q(s, actor(s))  ≡  minimise -Q(s, actor(s))
@@ -274,6 +276,17 @@ class DiffDriveAgent:
     # Plotting
     # ------------------------------------------------------------------
 
+    def get_smooth_statistics(self, data, window=100):
+        """Restituisce media e deviazione standard mobile."""
+        data = np.array(data)
+        if len(data) < window:
+            return data, np.zeros_like(data)
+    
+        means = np.convolve(data, np.ones(window)/window, mode='valid')
+        # Calcoliamo la deviazione standard mobile
+        stds = np.array([np.std(data[i:i+window]) for i in range(len(data) - window + 1)])
+        return means, stds
+    
     def _plot(self, rewards, lengths, critic_losses, actor_losses):
         fig, axes = plt.subplots(2, 2, figsize=(16, 8))
         fig.suptitle("DDPG Training Curves", fontsize=14, fontweight="bold")
@@ -282,9 +295,13 @@ class DiffDriveAgent:
 
         # Episode reward
         axes[0, 0].plot(episodes, rewards, color="steelblue", alpha=0.5, linewidth=0.8)
-        if len(rewards) >= 100:
-            ma = [np.mean(rewards[i-100:i]) for i in range(100, len(rewards)+1)]
-            axes[0, 0].plot(episodes[99:], ma, color="orange", linewidth=1.5, label="MA(100)")
+        window = 100
+        if len(rewards) >= window:
+            means, stds = self.get_smooth_statistics(rewards, window)
+            x_axis = episodes[window-1:]
+            #ma = [np.mean(rewards[i-100:i]) for i in range(100, len(rewards)+1)]
+            axes[0, 0].plot(x_axis, means, color="orange", linewidth=1.5, label=f"MA({window})")
+            axes[0,0].fill_between(x_axis, means-2*stds, means+2*stds, color="orange", alpha=0.2, label="Confidence (std)")
             axes[0, 0].legend(fontsize=8)
         axes[0, 0].set_title("Episode Reward")
         axes[0, 0].set_ylabel("Reward")
@@ -312,3 +329,55 @@ class DiffDriveAgent:
         plt.tight_layout()
         plt.savefig("./images/DiffDrive_training_curves.png", dpi=150)
         print("Plot saved to DiffDrive_training_curves.png")
+    
+    def plot_critic_heatmap(self, resolution: int = 50, theta: float = 0.0):
+        """
+        Genera una heatmap del valore Q calcolato dal Critic per ogni (x, y).
+        Assume che le prime due dimensioni dell'observation siano x e y.
+        """
+        # 1. Definiamo i limiti della griglia in base all'ambiente
+        # (Adatta questi valori ai limiti reali del tuo DiffDriveEnv)
+        x_range = np.linspace(-5, 5, resolution) 
+        y_range = np.linspace(-5, 5, resolution)
+        grid_x, grid_y = np.meshgrid(x_range, y_range)
+        
+        q_values = np.zeros((resolution, resolution))
+        
+        self.critic.eval()
+        self.actor.eval()
+        
+        with torch.no_grad():
+            for i in range(resolution):
+                for j in range(resolution):
+                    # Costruiamo un'osservazione fittizia
+                    # Esempio: [x, y, cos(theta), sin(theta), lidar_1, ..., lidar_n]
+                    # NOTA: Qui devi replicare l'esatta struttura del tuo vettore 'obs'
+                    obs = np.zeros(self.env.observation_space.shape[0])
+                    obs[0] = grid_x[i, j]
+                    obs[1] = grid_y[i, j]
+                    # Se l'orientamento è nelle obs (es. pos 2 e 3)
+                    if len(obs) > 3:
+                        obs[2] = np.cos(theta)
+                        obs[3] = np.sin(theta)
+                    
+                    obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
+                    
+                    # Chiediamo all'Actor cosa farebbe in quel punto
+                    action_t = self.actor(obs_t)
+                    # Il Critic valuta l'azione dell'Actor
+                    q_val = self.critic(obs_t, action_t)
+                    
+                    q_values[i, j] = q_val.cpu().item()
+
+        # 2. Plotting
+        plt.figure(figsize=(8, 6))
+        im = plt.imshow(q_values, extent=[x_range[0], x_range[-1], y_range[0], y_range[-1]], 
+                        origin='lower', cmap='viridis')
+        plt.colorbar(im, label='Valore Q (Stima del premio futuro)')
+        plt.title(f"Critic Heatmap (Orientation: {np.degrees(theta)}°)")
+        plt.xlabel("X")
+        plt.ylabel("Y")
+        plt.show()
+        
+        self.critic.train()
+        self.actor.train()

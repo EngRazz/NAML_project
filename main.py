@@ -1,7 +1,7 @@
 import gymnasium
 
-from grid_flag_env import GridFlagEnv
-from grid_flag_agent import GridFlagAgent
+from Grid_flag.grid_flag_env import GridFlagEnv
+from Grid_flag.grid_flag_agent import GridFlagAgent
 from gymnasium.utils.env_checker import check_env
 
 FLAG_CELLS = [

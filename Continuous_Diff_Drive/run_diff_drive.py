@@ -98,3 +98,7 @@ agent.eval_recorded(
     n_episodes   = 3,
     add_noise    = False
 )
+
+# Nel tuo main.py o notebook:
+agent.plot_critic_heatmap(resolution=60, theta=0.0) # Robot che guarda a "destra"
+agent.plot_critic_heatmap(resolution=60, theta=np.pi) # Robot che guarda a "sinistra"

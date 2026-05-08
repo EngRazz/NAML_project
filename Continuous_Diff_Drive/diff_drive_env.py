@@ -63,18 +63,18 @@ class DiffDriveEnv(gym.Env):
         # Render state
         self._window     = None
         self._clock      = None
-        self._last_lidar = None
+        self._last_lidar = None #initially the robot didn't make any move so the lidar didn't register any value
         self.metadata["render_fps"] = self.FPS
 
         # Observation space: [lidar x16, dist_to_goal, angle_to_goal]
         max_dist = math.sqrt(self.room_w ** 2 + self.room_h ** 2)
-        obs_low  = np.array([0.0] * n_lidar_rays + [0.0, -math.pi], dtype=np.float32)
-        obs_high = np.array([lidar_max_range] * n_lidar_rays + [max_dist, math.pi], dtype=np.float32)
+        obs_low  = np.array([0.0] * n_lidar_rays + [0.0, -math.pi], dtype=np.float32) #lowest observation is 0 for each lidar with 0 distance from goal and -pi as angle 
+        obs_high = np.array([lidar_max_range] * n_lidar_rays + [max_dist, math.pi], dtype=np.float32) #highest observation is 5 from each lidar and max distance from goal and pi as angle
         self.observation_space = spaces.Box(low=obs_low, high=obs_high, dtype=np.float32)
 
         # Action space: [v_linear, v_angular]
         self.action_space = spaces.Box(
-            low  = np.array([-0.5, -math.pi], dtype=np.float32),
+            low  = np.array([-0.5, -math.pi], dtype=np.float32), #can go in retro at 0.5 and rotating of -pi
             high = np.array([ 1.0,  math.pi], dtype=np.float32),
             dtype= np.float32,
         )
@@ -90,7 +90,7 @@ class DiffDriveEnv(gym.Env):
                 h = np.random.uniform(0.3, 1.5)
                 # reject if too close to start or goal
                 too_close = any(
-                    x < px < x + w and y < py < y + h
+                    x < px < x + w and y < py < y + h #check if initial or goal are inside the obstacle --> reject the obstacle
                     for (px, py) in protected
                 )
                 if not too_close:
@@ -126,7 +126,7 @@ class DiffDriveEnv(gym.Env):
         v_angular = float(action[1])
 
         # --- Differential drive kinematics ---
-        self.robot_theta += v_angular * self.dt
+        self.robot_theta += v_angular * self.dt #rotation
         self.robot_theta  = (self.robot_theta + math.pi) % (2 * math.pi) - math.pi  # wrap to [-π, π]
 
         new_pos = self.robot_pos + np.array([
@@ -141,7 +141,7 @@ class DiffDriveEnv(gym.Env):
 
         # --- Reward ---
         dist         = float(np.linalg.norm(self.goal_pos - self.robot_pos))
-        goal_reached = dist < self.robot_radius + 0.2
+        goal_reached = dist < self.robot_radius + 0.2 #reach goal if closer than 0.2 from the goal
 
         if collision:
             reward, terminated = -10.0, True
@@ -156,11 +156,11 @@ class DiffDriveEnv(gym.Env):
             # 2. Orientation: reward facing the goal
             diff       = self.goal_pos - self.robot_pos
             angle_glob = math.atan2(float(diff[1]), float(diff[0]))
-            angle_err  = abs((angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi)
+            angle_err  = abs((angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi) #reward term for the robot not orientated toward the goal
             orientation = (1.0 - angle_err / math.pi)  # 1.0 = facing goal, 0.0 = facing away
 
             # 3. Time penalty: small cost per step to discourage spinning in place
-            time_penalty = -0.05
+            time_penalty = -0.05 
 
             reward     = progress + 0.3 * orientation + time_penalty
             terminated = False
@@ -169,7 +169,7 @@ class DiffDriveEnv(gym.Env):
         truncated = self.current_step >= self.max_step
 
         info = {
-            "dist_to_goal": dist,
+            "dist_to_goal": dist, #isn't already provided in the get_obs?
             "collision"   : collision,
             "goal_reached": goal_reached,
             "steps"       : self.current_step,
@@ -191,8 +191,11 @@ class DiffDriveEnv(gym.Env):
 
         return np.concatenate([lidar, [dist, angle_rel]]).astype(np.float32)
 
+    #
+    # Each Lidar returns the distance from the robot and the nearest (if dist < max_lidar_range) object (wall or osbtacle) pointed by the lidar, using n_lidar uniformely distribuited arounf the robot
+    #
     def _get_lidar(self):
-        angles = np.linspace(0, 2 * math.pi, self.n_lidar_rays, endpoint=False) + self.robot_theta
+        angles = np.linspace(0, 2 * math.pi, self.n_lidar_rays, endpoint=False) + self.robot_theta 
         return np.array([self._cast_ray(a) for a in angles], dtype=np.float32)
 
     def _cast_ray(self, angle):
@@ -241,10 +244,11 @@ class DiffDriveEnv(gym.Env):
     def _check_collision(self, pos):
         x, y = float(pos[0]), float(pos[1])
         r    = self.robot_radius
-
+        #check if robot went outside the perimeter of the room
         if x - r < 0 or x + r > self.room_w or y - r < 0 or y + r > self.room_h:
             return True
-
+        
+        #check if robot is inside an obstacle
         for (ox, oy, ow, oh) in self.obstacles:
             cx = max(ox, min(x, ox + ow))
             cy = max(oy, min(y, oy + oh))
@@ -258,12 +262,12 @@ class DiffDriveEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def _init_pygame(self):
-        pygame.init()
-        W = int(self.room_w * self.RENDER_SCALE)
-        H = int(self.room_h * self.RENDER_SCALE) + self.HUD_HEIGHT
+        pygame.init() #start the graphic engine
+        W = int(self.room_w * self.RENDER_SCALE) #rescale the room to give more pixel to single posizion
+        H = int(self.room_h * self.RENDER_SCALE) + self.HUD_HEIGHT # as above and add a space where will be written some informative text
         pygame.display.set_caption("DiffDrive")
-        self._window = pygame.display.set_mode((W, H))
-        self._clock  = pygame.time.Clock()
+        self._window = pygame.display.set_mode((W, H)) #display the window of decided dimension
+        self._clock  = pygame.time.Clock() #create an object to manage the FPS
         try:
             self._font = pygame.font.SysFont("monospace", 15, bold=True)
         except Exception:
@@ -278,21 +282,21 @@ class DiffDriveEnv(gym.Env):
         H  = int(self.room_h * S)
         TH = H + self.HUD_HEIGHT
 
-        COL_BG       = (15,  18,  28)
-        COL_WALL     = (40,  50,  80)
-        COL_OBS      = (50,  60, 100)
-        COL_OBS_EDGE = (80,  95, 140)
-        COL_ROBOT    = (80, 200, 255)
-        COL_GLOW     = (30, 100, 200)
-        COL_GOAL     = (80, 220, 120)
-        COL_GOAL_GLW = (20, 120,  50)
-        COL_LIDAR    = (255,  80,  80)
-        COL_HUD_BG   = (14,  17,  30)
-        COL_HUD_BDR  = (40,  50,  90)
-        COL_TEXT     = (180, 200, 240)
+        COL_BG       = (15,  18,  28) #color of the background 
+        COL_WALL     = (40,  50,  80) #color of the wall
+        COL_OBS      = (50,  60, 100) #color of the obstacles
+        COL_OBS_EDGE = (80,  95, 140) #color of the obstacle edges
+        COL_ROBOT    = (80, 200, 255) #color of the robot
+        COL_GLOW     = (30, 100, 200) #color of the glow for the robot
+        COL_GOAL     = (80, 220, 120) #color of the goal position
+        COL_GOAL_GLW = (20, 120,  50) #color of the glow for the goal
+        COL_LIDAR    = (255,  80,  80) #color of the lidar
+        COL_HUD_BG   = (14,  17,  30) #color of the background space dedicated to other info
+        COL_HUD_BDR  = (40,  50,  90) #color of the border for the hud space
+        COL_TEXT     = (180, 200, 240) #color for the text
         COL_ACCENT   = (100, 160, 255)
 
-        def to_px(x, y):
+        def to_px(x, y): #return the cordinates adapted to the Scale factor with origin adapted to be (0,0) 
             return int(x * S), int((self.room_h - y) * S)
 
         if not hasattr(self, "_font") or not pygame.get_init():
@@ -304,12 +308,12 @@ class DiffDriveEnv(gym.Env):
         canvas.fill(COL_BG)
 
         # Room boundary
-        pygame.draw.rect(canvas, COL_WALL, (0, 0, W, H), 3)
+        pygame.draw.rect(canvas, COL_WALL, (0, 0, W, H), 3) #draw the rectangle on the surface that represent the walls
 
         # Obstacles
         for (ox, oy, ow, oh) in self.obstacles:
-            px, py = to_px(ox, oy + oh)
-            pw, ph = int(ow * S), int(oh * S)
+            px, py = to_px(ox, oy + oh) #obtain corrected coordinated
+            pw, ph = int(ow * S), int(oh * S) #obstain scaled width
             pygame.draw.rect(canvas, COL_OBS,      (px, py, pw, ph))
             pygame.draw.rect(canvas, COL_OBS_EDGE, (px, py, pw, ph), 2)
 
