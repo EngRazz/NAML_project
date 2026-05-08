@@ -1,4 +1,4 @@
-from typing import Optional
+from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -9,6 +9,16 @@ from gymnasium.wrappers import RecordVideo, RecordEpisodeStatistics
 from diff_drive_env import DiffDriveEnv
 from replay_buffer import ReplayBuffer
 from networks import Actor, Critic, OUNoise, init_weights
+
+
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_CHECKPOINT_PATH = BASE_DIR / "models" / "ddpg_checkpoint.pt"
+DEFAULT_PLOT_PATH = BASE_DIR / "images" / "ddpg_diff_drive_training_curves.png"
+
+
+def _artifact_path(path):
+    path = Path(path)
+    return path if path.is_absolute() else BASE_DIR / path
 
 
 class DiffDriveAgent:
@@ -22,7 +32,7 @@ class DiffDriveAgent:
         critic_target — slow-moving copy of critic, used for stable TD targets
 
     At each step:
-        1. Actor selects an action + Gaussian exploration noise
+        1. Actor selects an action + Ornstein-Uhlenbeck exploration noise
         2. Transition is stored in the replay buffer
         3. A random batch is sampled and used to update critic (minimize Bellman error)
         4. Actor is updated to maximise Q(s, actor(s))
@@ -36,7 +46,7 @@ class DiffDriveAgent:
         critic_lr:    float = 1e-3,
         discount:     float = 0.99,       # gamma
         tau:          float = 0.005,      # soft update rate for target networks
-        noise_std:    float = 0.2,        # std of Gaussian exploration noise
+        noise_std:    float = 0.2,        # std of Ornstein-Uhlenbeck exploration noise
         noise_clip:   float = 0.5,        # max absolute value of noise
         batch_size:   int   = 256,
         buffer_size:  int   = 100_000,
@@ -47,8 +57,7 @@ class DiffDriveAgent:
         self.env        = env
         self.discount   = discount
         self.tau        = tau
-        # self.noise_std  = noise_std
-        # self.noise_clip = noise_clip
+        self.noise_clip = noise_clip
         self.batch_size = batch_size
         self.warmup_steps = warmup_steps
         self.device     = torch.device(device)
@@ -64,15 +73,15 @@ class DiffDriveAgent:
         self.actor  = Actor(obs_dim, action_dim, action_low, action_high, hidden_dim).to(self.device)
         self.critic = Critic(obs_dim, action_dim, hidden_dim).to(self.device)
 
+        # Initialise online networks before target networks copy them.
+        self.actor.apply(init_weights)
+        self.critic.apply(init_weights)
+
         # Target networks start as exact copies
         self.actor_target  = Actor(obs_dim, action_dim, action_low, action_high, hidden_dim).to(self.device)
         self.critic_target = Critic(obs_dim, action_dim, hidden_dim).to(self.device)
         self.actor_target.load_state_dict(self.actor.state_dict()) #che fa?
         self.critic_target.load_state_dict(self.critic.state_dict())
-
-        # Initialise weights
-        self.actor.apply(init_weights)
-        self.critic.apply(init_weights)
 
         # ── Optimisers ────────────────────────────────────────────────
         self.actor_optim  = torch.optim.Adam(self.actor.parameters(),  lr=actor_lr)
@@ -93,20 +102,18 @@ class DiffDriveAgent:
         """
         Choose an action given an observation.
 
-        During training (add_noise=True) Gaussian noise is added to encourage
+        During training (add_noise=True) OU noise is added to encourage
         exploration. At evaluation time, set add_noise=False for pure exploitation.
         """
-        if self.total_steps < self.warmup_steps:
+        if add_noise and self.total_steps < self.warmup_steps:
             # Warm-up: purely random actions to fill the replay buffer
             return self.env.action_space.sample()
 
         obs_t  = torch.FloatTensor(obs).unsqueeze(0).to(self.device) #transform the obs in tensor, with unsqueeze change the dimension in (1,obs.shape[0]) since tf use this format and move data to the device with the network
         action = self.actor(obs_t).detach().cpu().numpy()[0] #get answer from network, detach to avoid backprog, cpu to move data in cpu (maybe where moved in other device)and numpy to convert in np.array. [0] to invert unsqueeze 
 
-        if add_noise: 
-            # noise  = np.random.normal(0, self.noise_std, size=action.shape)
-            # noise  = np.clip(noise, -self.noise_clip, self.noise_clip)
-            noise  = self.ou_noise.sample()
+        if add_noise:
+            noise  = np.clip(self.ou_noise.sample(), -self.noise_clip, self.noise_clip)
             action = np.clip(action + noise, self.env.action_space.low, self.env.action_space.high)
 
         return action.astype(np.float32)
@@ -155,7 +162,7 @@ class DiffDriveAgent:
         self._soft_update(self.actor,  self.actor_target)
         self._soft_update(self.critic, self.critic_target)
 
-        return float(critic_loss), float(actor_loss)
+        return float(critic_loss.detach().cpu()), float(actor_loss.detach().cpu())
 
     def _soft_update(self, online: torch.nn.Module, target: torch.nn.Module):
         """θ_target ← τ * θ_online + (1 - τ) * θ_target"""
@@ -173,12 +180,20 @@ class DiffDriveAgent:
         record_every:  int = 100,
         log_every:     int = 100,
         add_noise:     bool = True,
+        name_prefix:   str = "ddpg_diff_drive_training",
+        checkpoint_path = DEFAULT_CHECKPOINT_PATH,
+        plot_path      = DEFAULT_PLOT_PATH,
     ):
+        video_folder = _artifact_path(video_folder)
+        video_folder.mkdir(parents=True, exist_ok=True)
+        checkpoint_path = _artifact_path(checkpoint_path)
+        plot_path = _artifact_path(plot_path)
+
         env = RecordVideo(
             self.env,
-            video_folder=video_folder,
-            name_prefix="DiffDriveTrain",
-            episode_trigger=lambda ep: ep % record_every == 0,
+            video_folder=str(video_folder),
+            name_prefix=name_prefix,
+            episode_trigger=lambda ep: record_every > 0 and ep % record_every == 0,
         )
         env = RecordEpisodeStatistics(env, buffer_length=num_episodes)
 
@@ -189,6 +204,7 @@ class DiffDriveAgent:
 
         for ep in tqdm(range(num_episodes), desc="Training"):
             obs, _     = env.reset()
+            self.ou_noise.reset()
             done       = False
             ep_reward  = 0
             ep_c_loss  = []
@@ -199,7 +215,7 @@ class DiffDriveAgent:
                 next_obs, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
 
-                self.buffer.add(obs, action, reward, next_obs, terminated)
+                self.buffer.add(obs, action, reward, next_obs, done)
                 obs = next_obs
                 ep_reward     += reward
                 self.total_steps += 1
@@ -224,15 +240,17 @@ class DiffDriveAgent:
                       f"steps: {self.total_steps}")
 
         # Save final model
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save({
             "actor" : self.actor.state_dict(),
             "critic": self.critic.state_dict(),
             "actor_target" : self.actor_target.state_dict(),
             "critic_target": self.critic_target.state_dict()
-        }, "Continuous_Diff_Drive/models/ddpg_checkpoint.pt")
+        }, checkpoint_path)
+        print(f"Checkpoint saved to {checkpoint_path}")
 
         env.close()
-        self._plot(episode_rewards, episode_lengths, critic_losses, actor_losses)
+        self._plot(episode_rewards, episode_lengths, critic_losses, actor_losses, plot_path=plot_path)
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -241,14 +259,17 @@ class DiffDriveAgent:
     def eval_recorded(
         self,
         video_folder: str = "videos/evaluation",
-        name_prefix:  str = "eval",
+        name_prefix:  str = "ddpg_diff_drive_eval_greedy",
         n_episodes:   int = 3,
         add_noise:    bool = False,
     ):
         """Run n_episodes greedy episodes and record them."""
+        video_folder = _artifact_path(video_folder)
+        video_folder.mkdir(parents=True, exist_ok=True)
+
         env = RecordVideo(
             self.env,
-            video_folder=video_folder,
+            video_folder=str(video_folder),
             name_prefix=name_prefix,
             episode_trigger=lambda ep: True,
         )
@@ -276,18 +297,10 @@ class DiffDriveAgent:
     # Plotting
     # ------------------------------------------------------------------
 
-    def get_smooth_statistics(self, data, window=100):
-        """Restituisce media e deviazione standard mobile."""
-        data = np.array(data)
-        if len(data) < window:
-            return data, np.zeros_like(data)
-    
-        means = np.convolve(data, np.ones(window)/window, mode='valid')
-        # Calcoliamo la deviazione standard mobile
-        stds = np.array([np.std(data[i:i+window]) for i in range(len(data) - window + 1)])
-        return means, stds
-    
-    def _plot(self, rewards, lengths, critic_losses, actor_losses):
+    def _plot(self, rewards, lengths, critic_losses, actor_losses, plot_path=DEFAULT_PLOT_PATH):
+        plot_path = _artifact_path(plot_path)
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+
         fig, axes = plt.subplots(2, 2, figsize=(16, 8))
         fig.suptitle("DDPG Training Curves", fontsize=14, fontweight="bold")
 
@@ -327,57 +340,6 @@ class DiffDriveAgent:
         axes[1, 1].grid(alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig("./images/DiffDrive_training_curves.png", dpi=150)
-        print("Plot saved to DiffDrive_training_curves.png")
-    
-    def plot_critic_heatmap(self, resolution: int = 50, theta: float = 0.0):
-        """
-        Genera una heatmap del valore Q calcolato dal Critic per ogni (x, y).
-        Assume che le prime due dimensioni dell'observation siano x e y.
-        """
-        # 1. Definiamo i limiti della griglia in base all'ambiente
-        # (Adatta questi valori ai limiti reali del tuo DiffDriveEnv)
-        x_range = np.linspace(-5, 5, resolution) 
-        y_range = np.linspace(-5, 5, resolution)
-        grid_x, grid_y = np.meshgrid(x_range, y_range)
-        
-        q_values = np.zeros((resolution, resolution))
-        
-        self.critic.eval()
-        self.actor.eval()
-        
-        with torch.no_grad():
-            for i in range(resolution):
-                for j in range(resolution):
-                    # Costruiamo un'osservazione fittizia
-                    # Esempio: [x, y, cos(theta), sin(theta), lidar_1, ..., lidar_n]
-                    # NOTA: Qui devi replicare l'esatta struttura del tuo vettore 'obs'
-                    obs = np.zeros(self.env.observation_space.shape[0])
-                    obs[0] = grid_x[i, j]
-                    obs[1] = grid_y[i, j]
-                    # Se l'orientamento è nelle obs (es. pos 2 e 3)
-                    if len(obs) > 3:
-                        obs[2] = np.cos(theta)
-                        obs[3] = np.sin(theta)
-                    
-                    obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
-                    
-                    # Chiediamo all'Actor cosa farebbe in quel punto
-                    action_t = self.actor(obs_t)
-                    # Il Critic valuta l'azione dell'Actor
-                    q_val = self.critic(obs_t, action_t)
-                    
-                    q_values[i, j] = q_val.cpu().item()
-
-        # 2. Plotting
-        plt.figure(figsize=(8, 6))
-        im = plt.imshow(q_values, extent=[x_range[0], x_range[-1], y_range[0], y_range[-1]], 
-                        origin='lower', cmap='viridis')
-        plt.colorbar(im, label='Valore Q (Stima del premio futuro)')
-        plt.title(f"Critic Heatmap (Orientation: {np.degrees(theta)}°)")
-        plt.xlabel("X")
-        plt.ylabel("Y")
-        plt.show()
-        
-        self.critic.train()
-        self.actor.train()
+        fig.savefig(plot_path, dpi=150)
+        plt.close(fig)
+        print(f"Plot saved to {plot_path}")

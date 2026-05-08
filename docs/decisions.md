@@ -28,7 +28,7 @@ The time to get the flags is limited.
 **Reward**: decrease if the agent bumps an obstacle (walls are considered obstacles), increase if it gets the goal position
 
 ### Algorithms
-- **DDPG-TD3**
+- **DDPG**
 - **SAC**
 
 ### Plots
