@@ -297,6 +297,25 @@ class DiffDriveAgent:
     # Plotting
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def get_smooth_statistics(values, window: int):
+        """Return rolling mean and standard deviation for a 1D sequence."""
+        values = np.asarray(values, dtype=np.float32)
+        if window <= 0:
+            raise ValueError("window must be positive")
+        if len(values) < window:
+            return np.array([], dtype=np.float32), np.array([], dtype=np.float32)
+
+        means = np.array([
+            np.mean(values[i - window:i])
+            for i in range(window, len(values) + 1)
+        ], dtype=np.float32)
+        stds = np.array([
+            np.std(values[i - window:i])
+            for i in range(window, len(values) + 1)
+        ], dtype=np.float32)
+        return means, stds
+
     def _plot(self, rewards, lengths, critic_losses, actor_losses, plot_path=DEFAULT_PLOT_PATH):
         plot_path = _artifact_path(plot_path)
         plot_path.parent.mkdir(parents=True, exist_ok=True)
