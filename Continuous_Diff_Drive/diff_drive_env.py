@@ -86,6 +86,24 @@ class DiffDriveEnv(gym.Env):
         cx = max(rx, min(px, rx + rw))
         cy = max(ry, min(py, ry + rh))
         return math.sqrt((px - cx) ** 2 + (py - cy) ** 2)
+    
+    @staticmethod
+    def _lidar_safety_score(lidar, lidar_max_range):
+        """
+        Convert lidar readings into a normalized safety score in [0, 1].
+
+        Higher = safer (farther from nearby obstacles).
+
+        Uses the 20th percentile instead of min(lidar)
+        to avoid instability from a single noisy ray.
+        """
+        lidar = np.asarray(lidar, dtype=np.float32)
+
+        # Normalize distances to [0, 1]
+        norm = np.clip(lidar / lidar_max_range, 0.0, 1.0)
+
+        # Robust safety estimate
+        return float(np.percentile(norm, 20))
 
     def _sample_obstacles(self):
         obstacles = []
@@ -128,7 +146,10 @@ class DiffDriveEnv(gym.Env):
         self.robot_theta  = 0.0
         self.current_step = 0
         self.prev_dist    = float(np.linalg.norm(self.goal_pos - self.robot_pos))
-        self._last_lidar  = None
+
+        # Initial lidar state
+        self._prev_lidar  = self._get_lidar()
+        self._last_lidar  = self._prev_lidar.copy()
 
         if self.render_mode == "human" and self._window is None:
             self._init_pygame()
@@ -141,55 +162,117 @@ class DiffDriveEnv(gym.Env):
         v_linear  = float(action[0])
         v_angular = float(action[1])
 
-        # --- Differential drive kinematics ---
-        self.robot_theta += v_angular * self.dt #rotation
-        self.robot_theta  = (self.robot_theta + math.pi) % (2 * math.pi) - math.pi  # wrap to [-π, π]
+        # Differential drive kinematics
+        self.robot_theta += v_angular * self.dt
+        self.robot_theta = (
+            (self.robot_theta + math.pi) % (2 * math.pi)
+        ) - math.pi
 
         new_pos = self.robot_pos + np.array([
             v_linear * math.cos(self.robot_theta),
             v_linear * math.sin(self.robot_theta),
         ], dtype=np.float32) * self.dt
 
-        # --- Collision ---
+        # Collision handling
         collision = self._check_collision(new_pos)
+
         if not collision:
             self.robot_pos = new_pos
 
-        # --- Reward ---
-        dist         = float(np.linalg.norm(self.goal_pos - self.robot_pos))
-        goal_reached = dist < self.robot_radius + 0.2 #reach goal if closer than 0.2 from the goal
+        # Current state measurements
+        dist = float(np.linalg.norm(self.goal_pos - self.robot_pos))
 
+        goal_reached = (
+            dist < self.robot_radius + 0.2
+        )
+
+        curr_lidar = self._get_lidar()
+
+        # Terminal rewards
         if collision:
-            reward, terminated = -10.0, True
+            reward = -10.0
+            terminated = True
 
         elif goal_reached:
-            reward, terminated = 100.0, True
+            reward = 100.0
+            terminated = True
 
         else:
-            # 1. Progress: reward getting closer, penalise moving away
-            progress = (self.prev_dist - dist) * 10.0
+            # Goal progress reward
+            goal_progress = (
+                (self.prev_dist - dist)
+                / self.lidar_max_range
+            )
 
-            # 2. Orientation: reward facing the goal
-            diff       = self.goal_pos - self.robot_pos
-            angle_glob = math.atan2(float(diff[1]), float(diff[0]))
-            angle_err  = abs((angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi) #reward term for the robot not orientated toward the goal
-            orientation = (1.0 - angle_err / math.pi)  # 1.0 = facing goal, 0.0 = facing away
+            # Orientation reward
+            diff = self.goal_pos - self.robot_pos
 
-            # 3. Time penalty: small cost per step to discourage spinning in place
-            time_penalty = -0.05 
+            angle_glob = math.atan2(
+                float(diff[1]),
+                float(diff[0])
+            )
 
-            reward     = progress + 0.3 * orientation + time_penalty
+            angle_err = abs(
+                (angle_glob - self.robot_theta + math.pi)
+                % (2 * math.pi)
+                - math.pi
+            )
+
+            # 1.0 = facing goal
+            # 0.0 = facing opposite direction
+            orientation = (
+                1.0 - angle_err / math.pi
+            )
+
+            # LiDAR safety improvement reward
+            prev_safe = self._lidar_safety_score(
+                self._prev_lidar,
+                self.lidar_max_range
+            )
+
+            curr_safe = self._lidar_safety_score(
+                curr_lidar,
+                self.lidar_max_range
+            )
+
+            lidar_progress = curr_safe - prev_safe
+
+            # Risk penalty
+            # Penalize staying too close to obstacles
+            DANGER_THRESHOLD = 0.3
+            if curr_safe < DANGER_THRESHOLD:
+                risk_penalty = -0.5 * (1.0 - curr_safe / DANGER_THRESHOLD)
+            else:
+                risk_penalty = 0.0
+
+            # Small time penalty
+            time_penalty = -0.02
+
+            # Final shaped reward
+            reward = (
+                8.0 * goal_progress
+                + 3.0 * lidar_progress
+                + 0.2 * orientation
+                + risk_penalty
+                + time_penalty
+            )
+
             terminated = False
 
+        # Update previous state trackers
         self.prev_dist = dist
+        self._prev_lidar = curr_lidar
+        self._last_lidar = curr_lidar
+
         truncated = self.current_step >= self.max_step
 
         info = {
-            "dist_to_goal": dist, #isn't already provided in the get_obs?
-            "collision"   : collision,
+            "dist_to_goal": dist,
+            "collision": collision,
             "goal_reached": goal_reached,
-            "steps"       : self.current_step,
+            "steps": self.current_step,
         }
+
         return self._get_obs(), reward, terminated, truncated, info
 
     # ------------------------------------------------------------------
