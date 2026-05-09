@@ -1,3 +1,4 @@
+from collections import deque
 from typing import Optional
 import numpy as np
 import gymnasium as gym
@@ -21,7 +22,8 @@ class DiffDriveEnv(gym.Env):
 
     Reward:
         - Dense: improvement in distance to goal at each step
-        - Collision: -10, episode ends
+        - LiDAR shaping: safer moves near obstacles are rewarded
+        - Collision: -50, episode ends
         - Goal reached: +100, episode ends
     """
 
@@ -31,6 +33,19 @@ class DiffDriveEnv(gym.Env):
     RENDER_SCALE = 80   # pixels per meter
     HUD_HEIGHT   = 60
     FPS          = 30
+
+    GOAL_REWARD = 100.0
+    COLLISION_REWARD = -50.0
+    SAFE_DISTANCE = 1.2
+    FRONT_SAFE_DISTANCE = 1.0
+    GOAL_BLOCK_DISTANCE = 2.0
+    GOAL_PROGRESS_WEIGHT = 8.0
+    BLOCKED_GOAL_PROGRESS_WEIGHT = 3.0
+    DANGER_REDUCTION_WEIGHT = 3.0
+    DANGER_PENALTY_WEIGHT = 2.0
+    FRONT_DANGER_PENALTY_WEIGHT = 1.0
+    ORIENTATION_WEIGHT = 0.2
+    TIME_PENALTY = -0.02
 
     def __init__(
         self,
@@ -45,11 +60,13 @@ class DiffDriveEnv(gym.Env):
         robot_radius    = 0.3,
         dt              = 0.1,           # seconds per step
         render_mode     = None,
+        obstacle_mode   = "curriculum",  # curriculum, random_blocks, evaluate_like_detour, wall_with_gap
+        obstacle_mix    = None,
     ):
         super().__init__()
 
         self.room_w, self.room_h = room_size
-        self.obstacles       = obstacles or []
+        self.obstacles       = list(obstacles) if obstacles is not None else []
         self.random_obst     = random_obst
         self.robot_start     = np.array(robot_start, dtype=np.float32)
         self.goal_pos        = np.array(goal_pos,    dtype=np.float32)
@@ -59,6 +76,12 @@ class DiffDriveEnv(gym.Env):
         self.robot_radius    = robot_radius
         self.dt              = dt
         self.render_mode     = render_mode
+        self.obstacle_mode   = obstacle_mode
+        self.obstacle_mix    = obstacle_mix or {
+            "evaluate_like_detour": 0.4,
+            "wall_with_gap": 0.4,
+            "random_blocks": 0.2,
+        }
 
         # Render state
         self._window     = None
@@ -79,24 +102,274 @@ class DiffDriveEnv(gym.Env):
             dtype= np.float32,
         )
 
+    @staticmethod
+    def _point_rect_distance(point, rect):
+        px, py = float(point[0]), float(point[1])
+        rx, ry, rw, rh = rect
+        cx = max(rx, min(px, rx + rw))
+        cy = max(ry, min(py, ry + rh))
+        return math.sqrt((px - cx) ** 2 + (py - cy) ** 2)
+    
+    def _lidar_clearance(self, lidar):
+        """Robust obstacle clearance estimate in metres from LiDAR readings."""
+        lidar = np.asarray(lidar, dtype=np.float32)
+        return float(np.percentile(lidar, 20))
+
+    def _front_clearance(self, lidar):
+        """Minimum LiDAR distance in the forward +/-45 degree sector."""
+        lidar = np.asarray(lidar, dtype=np.float32)
+        angles = np.linspace(0, 2 * math.pi, self.n_lidar_rays, endpoint=False)
+        rel_angles = (angles + math.pi) % (2 * math.pi) - math.pi
+        front_mask = np.abs(rel_angles) <= math.pi / 4
+        if not np.any(front_mask):
+            return float(lidar[0])
+        return float(np.min(lidar[front_mask]))
+
+    def _goal_direction_clearance(self, lidar, angle_rel):
+        """LiDAR distance along the ray closest to the goal direction."""
+        lidar = np.asarray(lidar, dtype=np.float32)
+        angles = np.linspace(0, 2 * math.pi, self.n_lidar_rays, endpoint=False)
+        diffs = (angles - angle_rel + math.pi) % (2 * math.pi) - math.pi
+        return float(lidar[int(np.argmin(np.abs(diffs)))])
+
+    def _reward_components(self, dist, curr_lidar):
+        """Compute shaped reward terms for goal progress and LiDAR safety."""
+        goal_progress = self.prev_dist - dist
+
+        diff = self.goal_pos - self.robot_pos
+        angle_glob = math.atan2(float(diff[1]), float(diff[0]))
+        angle_rel = (angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi
+        angle_err = abs(angle_rel)
+        orientation = 1.0 - angle_err / math.pi
+
+        clearance = self._lidar_clearance(curr_lidar)
+        prev_clearance = self._lidar_clearance(self._prev_lidar)
+        danger = max(0.0, (self.SAFE_DISTANCE - clearance) / self.SAFE_DISTANCE)
+        prev_danger = max(0.0, (self.SAFE_DISTANCE - prev_clearance) / self.SAFE_DISTANCE)
+        danger_reduction = prev_danger - danger
+
+        front_clearance = self._front_clearance(curr_lidar)
+        front_danger = max(
+            0.0,
+            (self.FRONT_SAFE_DISTANCE - front_clearance) / self.FRONT_SAFE_DISTANCE,
+        )
+
+        goal_direction_lidar = self._goal_direction_clearance(curr_lidar, angle_rel)
+        goal_blocked = goal_direction_lidar < self.GOAL_BLOCK_DISTANCE
+        goal_weight = (
+            self.BLOCKED_GOAL_PROGRESS_WEIGHT
+            if goal_blocked
+            else self.GOAL_PROGRESS_WEIGHT
+        )
+
+        reward_goal_progress = goal_weight * goal_progress
+        reward_danger_reduction = self.DANGER_REDUCTION_WEIGHT * danger_reduction
+        reward_danger_penalty = -self.DANGER_PENALTY_WEIGHT * danger ** 2
+        reward_front_penalty = -self.FRONT_DANGER_PENALTY_WEIGHT * front_danger ** 2
+        reward_orientation = self.ORIENTATION_WEIGHT * orientation
+
+        reward = (
+            reward_goal_progress
+            + reward_danger_reduction
+            + reward_danger_penalty
+            + reward_front_penalty
+            + reward_orientation
+            + self.TIME_PENALTY
+        )
+
+        return reward, {
+            "reward_goal_progress": reward_goal_progress,
+            "reward_danger_reduction": reward_danger_reduction,
+            "reward_danger_penalty": reward_danger_penalty,
+            "reward_front_penalty": reward_front_penalty,
+            "reward_orientation": reward_orientation,
+            "goal_blocked": goal_blocked,
+            "lidar_clearance": clearance,
+            "front_clearance": front_clearance,
+            "goal_direction_clearance": goal_direction_lidar,
+        }
+
+    def _empty_reward_components(self, curr_lidar):
+        return {
+            "reward_goal_progress": 0.0,
+            "reward_danger_reduction": 0.0,
+            "reward_danger_penalty": 0.0,
+            "reward_front_penalty": 0.0,
+            "reward_orientation": 0.0,
+            "goal_blocked": False,
+            "lidar_clearance": self._lidar_clearance(curr_lidar),
+            "front_clearance": self._front_clearance(curr_lidar),
+            "goal_direction_clearance": self.lidar_max_range,
+        }
+
     def _sample_obstacles(self):
+        for _ in range(100):
+            mode = self._choose_obstacle_mode()
+            if mode == "evaluate_like_detour":
+                obstacles = self._sample_evaluate_like_detour()
+            elif mode == "wall_with_gap":
+                obstacles = self._sample_wall_with_gap()
+            else:
+                obstacles = self._sample_random_blocks()
+
+            if self._obstacle_set_is_valid(obstacles):
+                return obstacles
+
+        return []
+
+    def _choose_obstacle_mode(self):
+        if self.obstacle_mode != "curriculum":
+            return self.obstacle_mode
+
+        modes = list(self.obstacle_mix.keys())
+        weights = np.array([self.obstacle_mix[m] for m in modes], dtype=np.float64)
+        if len(modes) == 0 or weights.sum() <= 0:
+            return "random_blocks"
+        weights = weights / weights.sum()
+        return str(self.np_random.choice(modes, p=weights))
+
+    def _sample_random_blocks(self):
         obstacles = []
         protected = [self.robot_start, self.goal_pos]
+        clearance = self.robot_radius + 0.5
+        margin = self.robot_radius + 0.2
+
         for _ in range(3):
-            for _ in range(20):   # max attempts
-                x = np.random.uniform(0.0, 9.0)
-                y = np.random.uniform(0.0, 9.0)
-                w = np.random.uniform(1.0, self.room_w-x)
-                h = np.random.uniform(1.0, self.room_h-y)
+            for _ in range(100):   # max attempts
+                max_w = max(0.5, min(2.0, self.room_w - 2 * margin))
+                max_h = max(0.3, min(1.5, self.room_h - 2 * margin))
+                w = float(self.np_random.uniform(0.5, max_w))
+                h = float(self.np_random.uniform(0.3, max_h))
+                x_hi = max(margin, self.room_w - margin - w)
+                y_hi = max(margin, self.room_h - margin - h)
+                x = float(self.np_random.uniform(margin, x_hi))
+                y = float(self.np_random.uniform(margin, y_hi))
+                rect = (x, y, w, h)
+                
+                # Past versione, I keep it just to be easly switched to decide finally the best one
+                # x = np.random.uniform(0.0, 9.0)
+                # y = np.random.uniform(0.0, 9.0)
+                # w = np.random.uniform(1.0, self.room_w-x)
+                # h = np.random.uniform(1.0, self.room_h-y)
                 # reject if too close to start or goal
                 too_close = any(
-                    x < px < x + w and y < py < y + h #check if initial or goal are inside the obstacle --> reject the obstacle
-                    for (px, py) in protected
+                    self._point_rect_distance(point, rect) < clearance
+                    for point in protected
                 )
                 if not too_close:
-                    obstacles.append((x, y, w, h))
+                    obstacles.append(rect)
                     break
         return obstacles
+
+    def _sample_evaluate_like_detour(self):
+        base = [
+            (2.0, 4.0, 3.0, 0.3),
+            (5.0, 2.0, 0.3, 3.0),
+            (7.0, 6.0, 1.5, 0.3),
+        ]
+        obstacles = []
+        for x, y, w, h in base:
+            jx = float(self.np_random.uniform(-0.45, 0.45))
+            jy = float(self.np_random.uniform(-0.45, 0.45))
+            jw = float(self.np_random.uniform(-0.25, 0.35))
+            jh = float(self.np_random.uniform(-0.15, 0.35))
+            nw = max(0.25, w + jw)
+            nh = max(0.25, h + jh)
+            nx = float(np.clip(x + jx, 0.5, self.room_w - nw - 0.5))
+            ny = float(np.clip(y + jy, 0.5, self.room_h - nh - 0.5))
+            obstacles.append((nx, ny, nw, nh))
+        return obstacles
+
+    def _sample_wall_with_gap(self):
+        gap_size = float(self.np_random.uniform(1.5, 2.3))
+        thickness = float(self.np_random.uniform(0.25, 0.45))
+        obstacles = []
+
+        if bool(self.np_random.integers(0, 2)):
+            x = float(self.np_random.uniform(3.5, 6.3))
+            gap_center = float(self.np_random.uniform(3.0, 7.0))
+            gap_low = max(0.8, gap_center - gap_size / 2)
+            gap_high = min(self.room_h - 0.8, gap_center + gap_size / 2)
+            if gap_low > 0.8:
+                obstacles.append((x, 0.8, thickness, gap_low - 0.8))
+            if gap_high < self.room_h - 0.8:
+                obstacles.append((x, gap_high, thickness, self.room_h - 0.8 - gap_high))
+        else:
+            y = float(self.np_random.uniform(3.5, 6.3))
+            gap_center = float(self.np_random.uniform(3.0, 7.0))
+            gap_low = max(0.8, gap_center - gap_size / 2)
+            gap_high = min(self.room_w - 0.8, gap_center + gap_size / 2)
+            if gap_low > 0.8:
+                obstacles.append((0.8, y, gap_low - 0.8, thickness))
+            if gap_high < self.room_w - 0.8:
+                obstacles.append((gap_high, y, self.room_w - 0.8 - gap_high, thickness))
+
+        return obstacles
+
+    def _obstacle_set_is_valid(self, obstacles):
+        protected_clearance = self.robot_radius + 0.2
+        for point in (self.robot_start, self.goal_pos):
+            if any(
+                self._point_rect_distance(point, rect) < protected_clearance
+                for rect in obstacles
+            ):
+                return False
+        return self._has_feasible_path(obstacles)
+
+    def _has_feasible_path(self, obstacles, resolution=0.2):
+        inflate = self.robot_radius + 0.05
+
+        def to_idx(point):
+            x, y = float(point[0]), float(point[1])
+            return int(round(x / resolution)), int(round(y / resolution))
+
+        max_ix = int(round(self.room_w / resolution))
+        max_iy = int(round(self.room_h / resolution))
+        start = to_idx(self.robot_start)
+        goal = to_idx(self.goal_pos)
+
+        def free(idx):
+            ix, iy = idx
+            if ix < 0 or iy < 0 or ix > max_ix or iy > max_iy:
+                return False
+            x, y = ix * resolution, iy * resolution
+            if (
+                x < self.robot_radius
+                or x > self.room_w - self.robot_radius
+                or y < self.robot_radius
+                or y > self.room_h - self.robot_radius
+            ):
+                return False
+            for ox, oy, ow, oh in obstacles:
+                if (
+                    ox - inflate <= x <= ox + ow + inflate
+                    and oy - inflate <= y <= oy + oh + inflate
+                ):
+                    return False
+            return True
+
+        if not free(start) or not free(goal):
+            return False
+
+        queue = deque([start])
+        visited = {start}
+        neighbors = [
+            (-1, -1), (-1, 0), (-1, 1),
+            (0, -1),           (0, 1),
+            (1, -1),  (1, 0),  (1, 1),
+        ]
+
+        while queue:
+            node = queue.popleft()
+            if node == goal:
+                return True
+            for dx, dy in neighbors:
+                nxt = (node[0] + dx, node[1] + dy)
+                if nxt not in visited and free(nxt):
+                    visited.add(nxt)
+                    queue.append(nxt)
+
+        return False
 
     # ------------------------------------------------------------------
     # Core API
@@ -112,7 +385,10 @@ class DiffDriveEnv(gym.Env):
         self.robot_theta  = 0.0
         self.current_step = 0
         self.prev_dist    = float(np.linalg.norm(self.goal_pos - self.robot_pos))
-        self._last_lidar  = None
+
+        # Initial lidar state
+        self._prev_lidar  = self._get_lidar()
+        self._last_lidar  = self._prev_lidar.copy()
 
         if self.render_mode == "human" and self._window is None:
             self._init_pygame()
@@ -125,58 +401,78 @@ class DiffDriveEnv(gym.Env):
         v_linear  = float(action[0])
         v_angular = float(action[1])
 
-        # --- Differential drive kinematics ---
-        self.robot_theta += v_angular * self.dt #rotation
-        self.robot_theta  = (self.robot_theta + math.pi) % (2 * math.pi) - math.pi  # wrap to [-π, π]
+        # Differential drive kinematics
+        self.robot_theta += v_angular * self.dt
+        self.robot_theta = (
+            (self.robot_theta + math.pi) % (2 * math.pi)
+        ) - math.pi
 
         new_pos = self.robot_pos + np.array([
             v_linear * math.cos(self.robot_theta),
             v_linear * math.sin(self.robot_theta),
         ], dtype=np.float32) * self.dt
 
-        # --- Collision ---
+        # Collision handling
         collision = self._check_collision(new_pos)
+
         if not collision:
             self.robot_pos = new_pos
 
-        # --- Reward ---
-        dist         = float(np.linalg.norm(self.goal_pos - self.robot_pos))
-        goal_reached = dist < self.robot_radius + 0.2 #reach goal if closer than 0.2 from the goal
+        # Current state measurements
+        dist = float(np.linalg.norm(self.goal_pos - self.robot_pos))
 
+        goal_reached = (
+            dist < self.robot_radius + 0.2
+        )
+
+        curr_lidar = self._get_lidar()
+
+        reward_components = self._empty_reward_components(curr_lidar)
+
+        # Terminal rewards
         if collision:
-            reward, terminated = -10.0, True
+            reward = self.COLLISION_REWARD
+            terminated = True
 
         elif goal_reached:
-            reward, terminated = 100.0, True
+            reward = self.GOAL_REWARD
+            terminated = True
 
         else:
+            # Fist versione:
+                reward, reward_components = self._reward_components(dist, curr_lidar)
+            # Second version
             # 1. Progress: reward getting closer, penalise moving away
-            progress = (self.prev_dist - dist) * 10
-            
-            min_lidar = np.min(self._last_lidar)
-            safety_reward = -2 * np.exp(-5.0 * min_lidar) if min_lidar < 0.5 else 1e-8
-
+            #    progress = (self.prev_dist - dist) * 10.0
+            #    min_lidar = np.min(self._last_lidar)
+            #    safety_reward = -2 * np.exp(-5.0 * min_lidar) if min_lidar < 0.5 else 1e-8
             # 2. Orientation: reward facing the goal
-            diff       = self.goal_pos - self.robot_pos
-            angle_glob = math.atan2(float(diff[1]), float(diff[0]))
-            angle_err  = abs((angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi) #reward term for the robot not orientated toward the goal
-            orientation = (1.0 - angle_err / math.pi)  # 1.0 = facing goal, 0.0 = facing away
+            #    diff       = self.goal_pos - self.robot_pos
+            #    angle_glob = math.atan2(float(diff[1]), float(diff[0]))
+            #    angle_err  = abs((angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi) #reward term for the robot not orientated toward the goal
+            #    orientation = (1.0 - angle_err / math.pi)  # 1.0 = facing goal, 0.0 = facing away
 
             # 3. Time penalty: small cost per step to discourage spinning in place
-            time_penalty = -0.05 
+            #    time_penalty = -0.05 
 
-            reward     = progress + 0.3 * orientation + time_penalty
-            terminated = False
+            #    reward     = progress + 0.3 * orientation + time_penalty + safety_reward
+                terminated = False
 
+        # Update previous state trackers
         self.prev_dist = dist
+        self._prev_lidar = curr_lidar
+        self._last_lidar = curr_lidar
+
         truncated = self.current_step >= self.max_step
 
         info = {
-            "dist_to_goal": dist, #isn't already provided in the get_obs?
-            "collision"   : collision,
+            "dist_to_goal": dist,
+            "collision": collision,
             "goal_reached": goal_reached,
-            "steps"       : self.current_step,
+            "steps": self.current_step,
+            **reward_components,
         }
+
         return self._get_obs(), reward, terminated, truncated, info
 
     # ------------------------------------------------------------------
@@ -264,13 +560,14 @@ class DiffDriveEnv(gym.Env):
     # Render
     # ------------------------------------------------------------------
 
-    def _init_pygame(self):
-        pygame.init() #start the graphic engine
-        W = int(self.room_w * self.RENDER_SCALE) #rescale the room to give more pixel to single posizion
-        H = int(self.room_h * self.RENDER_SCALE) + self.HUD_HEIGHT # as above and add a space where will be written some informative text
-        pygame.display.set_caption("DiffDrive")
-        self._window = pygame.display.set_mode((W, H)) #display the window of decided dimension
-        self._clock  = pygame.time.Clock() #create an object to manage the FPS
+    def _init_pygame(self, create_window=True):
+        pygame.init()
+        W = int(self.room_w * self.RENDER_SCALE)
+        H = int(self.room_h * self.RENDER_SCALE) + self.HUD_HEIGHT
+        if create_window:
+            pygame.display.set_caption("DiffDrive")
+            self._window = pygame.display.set_mode((W, H))
+            self._clock  = pygame.time.Clock()
         try:
             self._font = pygame.font.SysFont("monospace", 15, bold=True)
         except Exception:
@@ -303,9 +600,9 @@ class DiffDriveEnv(gym.Env):
             return int(x * S), int((self.room_h - y) * S)
 
         if not hasattr(self, "_font") or not pygame.get_init():
-            self._init_pygame()
+            self._init_pygame(create_window=self.render_mode == "human")
         if self._window is None and self.render_mode == "human":
-            self._init_pygame()
+            self._init_pygame(create_window=True)
 
         canvas = pygame.Surface((W, TH))
         canvas.fill(COL_BG)
@@ -375,5 +672,7 @@ class DiffDriveEnv(gym.Env):
     def close(self):
         if self._window is not None:
             pygame.display.quit()
+        if pygame.get_init():
             pygame.quit()
-            self._window = None
+        self._window = None
+        self._clock = None
