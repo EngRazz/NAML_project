@@ -186,6 +186,8 @@ class DiffDriveAgent:
         episode_lengths = []
         critic_losses   = []
         actor_losses    = []
+        ep_goal_dist = []
+        success_rate = []
 
         for ep in tqdm(range(num_episodes), desc="Training"):
             obs, _     = env.reset()
@@ -198,7 +200,8 @@ class DiffDriveAgent:
                 action = self.select_action(obs, add_noise)
                 next_obs, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
-
+                success_rate.append(done)
+                ep_goal_dist.append(next_obs[-2])
                 self.buffer.add(obs, action, reward, next_obs, terminated)
                 obs = next_obs
                 ep_reward     += reward
@@ -232,7 +235,7 @@ class DiffDriveAgent:
         }, "Continuous_Diff_Drive/models/ddpg_checkpoint.pt")
 
         env.close()
-        self._plot(episode_rewards, episode_lengths, critic_losses, actor_losses)
+        self._plot(episode_rewards, episode_lengths, critic_losses, actor_losses, success_rate, ep_goal_dist)
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -287,7 +290,7 @@ class DiffDriveAgent:
         stds = np.array([np.std(data[i:i+window]) for i in range(len(data) - window + 1)])
         return means, stds
     
-    def _plot(self, rewards, lengths, critic_losses, actor_losses):
+    def _plot(self, rewards, lengths, critic_losses, actor_losses, success_rate, ep_goal_dist):
         fig, axes = plt.subplots(2, 2, figsize=(16, 8))
         fig.suptitle("DDPG Training Curves", fontsize=14, fontweight="bold")
 
@@ -329,6 +332,13 @@ class DiffDriveAgent:
         plt.tight_layout()
         plt.savefig("./images/DiffDrive_training_curves.png", dpi=150)
         print("Plot saved to DiffDrive_training_curves.png")
+        
+        fig2, axs2 = plt.subplots(1, 2, figsize=(16,8))
+        axs2[0].plot(episodes, success_rate)
+        axs2[0].set_title("Success rate")
+        axs2[0].plot(episodes, ep_goal_dist)
+        axs2[0].set_title("Success rate")
+        plt.show()
     
     def plot_critic_heatmap(self, resolution: int = 50, theta: float = 0.0):
         """

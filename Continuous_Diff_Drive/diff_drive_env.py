@@ -86,8 +86,8 @@ class DiffDriveEnv(gym.Env):
             for _ in range(20):   # max attempts
                 x = np.random.uniform(0.0, 9.0)
                 y = np.random.uniform(0.0, 9.0)
-                w = np.random.uniform(1.0, self.room_size[0]-x)
-                h = np.random.uniform(1.0, self.room_size[1]-y)
+                w = np.random.uniform(1.0, self.room_w-x)
+                h = np.random.uniform(1.0, self.room_h-y)
                 # reject if too close to start or goal
                 too_close = any(
                     x < px < x + w and y < py < y + h #check if initial or goal are inside the obstacle --> reject the obstacle
@@ -151,7 +151,10 @@ class DiffDriveEnv(gym.Env):
 
         else:
             # 1. Progress: reward getting closer, penalise moving away
-            progress = (self.prev_dist - dist) * 10.0
+            progress = (self.prev_dist - dist) * 10
+            
+            min_lidar = np.min(self._last_lidar)
+            safety_reward = -2 * np.exp(-5.0 * min_lidar) if min_lidar < 0.5 else 1e-8
 
             # 2. Orientation: reward facing the goal
             diff       = self.goal_pos - self.robot_pos
