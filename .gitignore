@@ -40,3 +40,5 @@ dmypy.json
 .pyre/
 videos/
 images/
+*.ipynb
+models/
