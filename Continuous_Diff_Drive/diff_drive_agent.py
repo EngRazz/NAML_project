@@ -14,6 +14,7 @@ from networks import Actor, Critic, OUNoise, init_weights
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CHECKPOINT_PATH = BASE_DIR / "models" / "ddpg_checkpoint.pt"
 DEFAULT_PLOT_PATH = BASE_DIR / "images" / "ddpg_diff_drive_training_curves.png"
+DEFAULT_PLOT_PATH2 = BASE_DIR / "images" / "ddpg_diff_drive_training_curves2.png"
 
 
 def _artifact_path(path):
@@ -183,11 +184,13 @@ class DiffDriveAgent:
         name_prefix:   str = "ddpg_diff_drive_training",
         checkpoint_path = DEFAULT_CHECKPOINT_PATH,
         plot_path      = DEFAULT_PLOT_PATH,
+        plot_path2     = DEFAULT_PLOT_PATH2,
     ):
         video_folder = _artifact_path(video_folder)
         video_folder.mkdir(parents=True, exist_ok=True)
         checkpoint_path = _artifact_path(checkpoint_path)
         plot_path = _artifact_path(plot_path)
+        plot_path2 = _artifact_path(plot_path2)
 
         env = RecordVideo(
             self.env,
@@ -253,7 +256,7 @@ class DiffDriveAgent:
         print(f"Checkpoint saved to {checkpoint_path}")
 
         env.close()
-        self._plot(episode_rewards, episode_lengths, critic_losses, actor_losses, success_rate, ep_goal_dist, plot_path=plot_path)
+        self._plot(episode_rewards, episode_lengths, critic_losses, actor_losses, success_rate, ep_goal_dist, plot_path=plot_path, plot_path2=plot_path2)
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -319,10 +322,13 @@ class DiffDriveAgent:
         ], dtype=np.float32)
         return means, stds
     
-    def _plot(self, rewards, lengths, critic_losses, actor_losses,success_rate, ep_goal_dist, plot_path=DEFAULT_PLOT_PATH):
+    def _plot(self, rewards, lengths, critic_losses, actor_losses,success_rate, ep_goal_dist, plot_path=DEFAULT_PLOT_PATH, plot_path2=DEFAULT_PLOT_PATH2):
         
         plot_path = _artifact_path(plot_path)
         plot_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        plot_path2 = _artifact_path(plot_path2)
+        plot_path2.parent.mkdir(parents=True, exist_ok=True)
         
         fig, axes = plt.subplots(2, 2, figsize=(16, 8))
         fig.suptitle("DDPG Training Curves", fontsize=14, fontweight="bold")
@@ -371,8 +377,12 @@ class DiffDriveAgent:
         axs2[0].plot(episodes, success_rate)
         axs2[0].set_title("Success rate")
         axs2[0].plot(episodes, ep_goal_dist)
-        axs2[0].set_title("Success rate")
-        plt.show()
+        axs2[0].set_title("Ep_goal_dist")
+        plt.tight_layout()
+        fig2.savefig(plot_path2, dpi=150)
+        plt.close(fig2)
+        print(f"Plot 2 saved to {plot_path2}")
+        
     
     def plot_critic_heatmap(self, resolution: int = 50, theta: float = 0.0):
         """

@@ -34,9 +34,9 @@ class DiffDriveEnv(gym.Env):
     HUD_HEIGHT   = 60
     FPS          = 30
 
-    GOAL_REWARD = 500.0
-    COLLISION_REWARD = -200.0
-    TIMEOUT_REWARD = -150.0
+    GOAL_REWARD = 100.0
+    COLLISION_REWARD = -50.0
+    TIMEOUT_REWARD = -20.0
     SAFE_DISTANCE = 1.2
     FRONT_SAFE_DISTANCE = 1.0
     GOAL_BLOCK_DISTANCE = 2.0
@@ -397,6 +397,12 @@ class DiffDriveEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
+        action = np.clip(
+            action,
+            self.action_space.low,
+            self.action_space.high
+            )
+        
         self.current_step += 1
 
         v_linear  = float(action[0])
@@ -444,29 +450,72 @@ class DiffDriveEnv(gym.Env):
         #    terminated = False
 
         else:
-            # Fist versione:
-            #    reward, reward_components = self._reward_components(dist, curr_lidar)
-            # Second version
-            # 1. Progress: reward getting closer, penalise moving away
-            progress = (self.prev_dist - dist) * 8.0
-            min_lidar = np.min(self._last_lidar)
-            safety_reward = 0.0
-            if min_lidar < 0.2:
-                safety_reward = -5.0 # Penalità fissa per pericolo imminente
-            elif min_lidar < 0.5:
-                safety_reward = -2.0 * np.exp(-3.0 * min_lidar)
-            # 2. Orientation: reward facing the goal
-            diff       = self.goal_pos - self.robot_pos
-            angle_glob = math.atan2(float(diff[1]), float(diff[0]))
-            angle_err  = abs((angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi) #reward term for the robot not orientated toward the goal
-            orientation = (1.0 - angle_err / math.pi)  # 1.0 = facing goal, 0.0 = facing away
+    # ==========================================================
+    # PROGRESS REWARD
+    # ==========================================================
 
-            # 3. Time penalty: small cost per step to discourage spinning in place
-            time_penalty = -0.1 
-            inactivity_penalty = 0.0
-            if abs(v_linear) < 0.05:
-                inactivity_penalty = -0.5
-            reward     = progress + 0.1 * orientation + time_penalty + safety_reward + inactivity_penalty
+            progress = self.prev_dist - dist
+
+            # reward for being closer
+            reward_progress = 10.0 * progress
+
+    # ==========================================================
+    # ORIENTATION REWARD
+    # ==========================================================
+
+            diff = self.goal_pos - self.robot_pos
+
+            angle_glob = math.atan2(
+                float(diff[1]),
+                float(diff[0])
+            )
+
+            angle_err = abs(
+                (angle_glob - self.robot_theta + math.pi)
+                % (2 * math.pi)
+                - math.pi
+            )
+
+            orientation_reward = 0.3 * (1.0 - angle_err / math.pi)
+
+    # ==========================================================
+    # SAFETY REWARD
+    # ==========================================================
+
+            min_lidar = np.min(curr_lidar)
+
+    # penalità smooth
+            safety_penalty = 0.0
+
+            if min_lidar < 0.8:
+                safety_penalty = -0.5 * (0.8 - min_lidar)
+
+    # ==========================================================
+    # ACTION SMOOTHNESS
+    # Penalizza rotazioni troppo violente
+    # ==========================================================
+
+            angular_penalty = -0.02 * abs(v_angular)
+
+    # ==========================================================
+    # TIME PENALTY
+    # ==========================================================
+
+            time_penalty = -0.01
+
+    # ==========================================================
+    # FINAL REWARD
+    # ==========================================================
+
+            reward = (
+                reward_progress
+                + orientation_reward
+                + safety_penalty
+                + angular_penalty
+                + time_penalty
+            )
+                
+            
             terminated = False
 
         # Update previous state trackers
@@ -475,6 +524,8 @@ class DiffDriveEnv(gym.Env):
         self._last_lidar = curr_lidar
 
         truncated = self.current_step >= self.max_step
+        if truncated and not terminated:
+            reward += self.TIMEOUT_REWARD
 
         info = {
             "dist_to_goal": dist,
@@ -494,12 +545,32 @@ class DiffDriveEnv(gym.Env):
         lidar = self._get_lidar()
         self._last_lidar = lidar
 
-        diff       = self.goal_pos - self.robot_pos
-        dist       = float(np.linalg.norm(diff))
-        angle_glob = math.atan2(float(diff[1]), float(diff[0]))
-        angle_rel  = (angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi
+        diff = self.goal_pos - self.robot_pos
+        dist = float(np.linalg.norm(diff))
 
-        return np.concatenate([lidar, [dist, angle_rel]]).astype(np.float32)
+        angle_glob = math.atan2(float(diff[1]), float(diff[0]))
+        angle_rel = (angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi
+
+    # ==========================================================
+    # NORMALIZATION (IMPORTANT FOR SAC)
+    # ==========================================================
+
+    # LiDAR -> [0, 1]
+        lidar_norm = lidar / self.lidar_max_range
+
+    # Goal distance -> [0, 1]
+        max_dist = math.sqrt(self.room_w ** 2 + self.room_h ** 2)
+        dist_norm = dist / max_dist
+
+    # Angle -> [-1, 1]
+        angle_norm = angle_rel / math.pi
+
+        obs = np.concatenate([
+            lidar_norm,
+            [dist_norm, angle_norm]
+        ]).astype(np.float32)
+
+        return obs
 
     #
     # Each Lidar returns the distance from the robot and the nearest (if dist < max_lidar_range) object (wall or osbtacle) pointed by the lidar, using n_lidar uniformely distribuited arounf the robot
