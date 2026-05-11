@@ -14,6 +14,7 @@ from networks import Actor, Critic, OUNoise, init_weights
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CHECKPOINT_PATH = BASE_DIR / "models" / "ddpg_checkpoint.pt"
 DEFAULT_PLOT_PATH = BASE_DIR / "images" / "ddpg_diff_drive_training_curves.png"
+DEFAULT_PLOT_PATH2 = BASE_DIR / "images" / "ddpg_diff_drive_training_curves2.png"
 
 
 def _artifact_path(path):
@@ -183,11 +184,13 @@ class DiffDriveAgent:
         name_prefix:   str = "ddpg_diff_drive_training",
         checkpoint_path = DEFAULT_CHECKPOINT_PATH,
         plot_path      = DEFAULT_PLOT_PATH,
+        plot_path2     = DEFAULT_PLOT_PATH2,
     ):
         video_folder = _artifact_path(video_folder)
         video_folder.mkdir(parents=True, exist_ok=True)
         checkpoint_path = _artifact_path(checkpoint_path)
         plot_path = _artifact_path(plot_path)
+        plot_path2 = _artifact_path(plot_path2)
 
         env = RecordVideo(
             self.env,
@@ -201,6 +204,8 @@ class DiffDriveAgent:
         episode_lengths = []
         critic_losses   = []
         actor_losses    = []
+        ep_goal_dist = []
+        success_rate = []
 
         for ep in tqdm(range(num_episodes), desc="Training"):
             obs, _     = env.reset()
@@ -214,7 +219,8 @@ class DiffDriveAgent:
                 action = self.select_action(obs, add_noise)
                 next_obs, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
-
+                success_rate.append(done)
+                ep_goal_dist.append(next_obs[-2])
                 self.buffer.add(obs, action, reward, next_obs, done)
                 obs = next_obs
                 ep_reward     += reward
@@ -250,7 +256,7 @@ class DiffDriveAgent:
         print(f"Checkpoint saved to {checkpoint_path}")
 
         env.close()
-        self._plot(episode_rewards, episode_lengths, critic_losses, actor_losses, plot_path=plot_path)
+        self._plot(episode_rewards, episode_lengths, critic_losses, actor_losses, success_rate, ep_goal_dist, plot_path=plot_path, plot_path2=plot_path2)
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -315,11 +321,15 @@ class DiffDriveAgent:
             for i in range(window, len(values) + 1)
         ], dtype=np.float32)
         return means, stds
-
-    def _plot(self, rewards, lengths, critic_losses, actor_losses, plot_path=DEFAULT_PLOT_PATH):
+    
+    def _plot(self, rewards, lengths, critic_losses, actor_losses,success_rate, ep_goal_dist, plot_path=DEFAULT_PLOT_PATH, plot_path2=DEFAULT_PLOT_PATH2):
+        
         plot_path = _artifact_path(plot_path)
         plot_path.parent.mkdir(parents=True, exist_ok=True)
-
+        
+        plot_path2 = _artifact_path(plot_path2)
+        plot_path2.parent.mkdir(parents=True, exist_ok=True)
+        
         fig, axes = plt.subplots(2, 2, figsize=(16, 8))
         fig.suptitle("DDPG Training Curves", fontsize=14, fontweight="bold")
 
@@ -362,3 +372,66 @@ class DiffDriveAgent:
         fig.savefig(plot_path, dpi=150)
         plt.close(fig)
         print(f"Plot saved to {plot_path}")
+        
+        fig2, axs2 = plt.subplots(1, 2, figsize=(16,8))
+        axs2[0].plot(episodes, success_rate)
+        axs2[0].set_title("Success rate")
+        axs2[0].plot(episodes, ep_goal_dist)
+        axs2[0].set_title("Ep_goal_dist")
+        plt.tight_layout()
+        fig2.savefig(plot_path2, dpi=150)
+        plt.close(fig2)
+        print(f"Plot 2 saved to {plot_path2}")
+        
+    
+    def plot_critic_heatmap(self, resolution: int = 50, theta: float = 0.0):
+        """
+        Genera una heatmap del valore Q calcolato dal Critic per ogni (x, y).
+        Assume che le prime due dimensioni dell'observation siano x e y.
+        """
+        # 1. Definiamo i limiti della griglia in base all'ambiente
+        # (Adatta questi valori ai limiti reali del tuo DiffDriveEnv)
+        x_range = np.linspace(-5, 5, resolution) 
+        y_range = np.linspace(-5, 5, resolution)
+        grid_x, grid_y = np.meshgrid(x_range, y_range)
+        
+        q_values = np.zeros((resolution, resolution))
+        
+        self.critic.eval()
+        self.actor.eval()
+        
+        with torch.no_grad():
+            for i in range(resolution):
+                for j in range(resolution):
+                    # Costruiamo un'osservazione fittizia
+                    # Esempio: [x, y, cos(theta), sin(theta), lidar_1, ..., lidar_n]
+                    # NOTA: Qui devi replicare l'esatta struttura del tuo vettore 'obs'
+                    obs = np.zeros(self.env.observation_space.shape[0])
+                    obs[0] = grid_x[i, j]
+                    obs[1] = grid_y[i, j]
+                    # Se l'orientamento è nelle obs (es. pos 2 e 3)
+                    if len(obs) > 3:
+                        obs[2] = np.cos(theta)
+                        obs[3] = np.sin(theta)
+                    
+                    obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
+                    
+                    # Chiediamo all'Actor cosa farebbe in quel punto
+                    action_t = self.actor(obs_t)
+                    # Il Critic valuta l'azione dell'Actor
+                    q_val = self.critic(obs_t, action_t)
+                    
+                    q_values[i, j] = q_val.cpu().item()
+
+        # 2. Plotting
+        plt.figure(figsize=(8, 6))
+        im = plt.imshow(q_values, extent=[x_range[0], x_range[-1], y_range[0], y_range[-1]], 
+                        origin='lower', cmap='viridis')
+        plt.colorbar(im, label='Valore Q (Stima del premio futuro)')
+        plt.title(f"Critic Heatmap (Orientation: {np.degrees(theta)}°)")
+        plt.xlabel("X")
+        plt.ylabel("Y")
+        plt.show()
+        
+        self.critic.train()
+        self.actor.train()
