@@ -7,14 +7,17 @@ from tqdm import tqdm
 from gymnasium.wrappers import RecordVideo, RecordEpisodeStatistics
 
 from diff_drive_env import DiffDriveEnv
-from replay_buffer import ReplayBuffer
-from networks import Actor, Critic, OUNoise, init_weights
+from replay_buffer import ReplayBuffer, TorchReplayBuffer
+from networks import Actor, Critic, OUNoise, init_weights, GaussianActor, DoubleCritic
 
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CHECKPOINT_PATH = BASE_DIR / "models" / "ddpg_checkpoint.pt"
 DEFAULT_PLOT_PATH = BASE_DIR / "images" / "ddpg_diff_drive_training_curves.png"
 DEFAULT_PLOT_PATH2 = BASE_DIR / "images" / "ddpg_diff_drive_training_curves2.png"
+DEFAULT_SAC_CHECKPOINT_PATH = BASE_DIR / "models" / "sac_checkpoint.pt"
+DEFAULT_SAC_PLOT_PATH = BASE_DIR / "images" / "sac_diff_drive_training_curves.png"
+DEFAULT_SAC_PLOT_PATH2 = BASE_DIR / "images" / "sac_diff_drive_training_curves2.png"
 
 
 def _artifact_path(path):
@@ -22,7 +25,7 @@ def _artifact_path(path):
     return path if path.is_absolute() else BASE_DIR / path
 
 
-class DiffDriveAgent:
+class DiffDriveDDPGAgent:
     """
     DDPG (Deep Deterministic Policy Gradient) agent for the DiffDriveEnv.
 
@@ -435,3 +438,465 @@ class DiffDriveAgent:
         
         self.critic.train()
         self.actor.train()
+
+
+class DiffDriveSACAgent:
+    """
+    SAC (Soft Actor-Critic) agent for the shared DiffDriveEnv.
+
+    SAC uses a stochastic Gaussian actor, twin critics, one target twin critic,
+    entropy regularization, and an off-policy replay buffer. Training samples
+    stochastic actions; evaluation uses the deterministic mean action.
+    """
+
+    def __init__(
+        self,
+        env: DiffDriveEnv,
+        actor_lr: float = 3e-4,
+        critic_lr: float = 3e-4,
+        alpha_lr: float = 3e-4,
+        discount: float = 0.99,
+        tau: float = 0.005,
+        alpha: float = 0.2,
+        batch_size: int = 256,
+        buffer_size: int = 100_000,
+        hidden_dim: int = 256,
+        warmup_steps: int = 1_000,
+        device: str = "cpu",
+        automatic_entropy_tuning: bool = True,
+    ):
+        self.env = env
+        self.discount = discount
+        self.tau = tau
+        self.batch_size = batch_size
+        self.warmup_steps = warmup_steps
+        self.device = torch.device(device)
+        self.automatic_entropy_tuning = automatic_entropy_tuning
+
+        obs_dim = env.observation_space.shape[0]
+        action_dim = env.action_space.shape[0]
+        action_low = env.action_space.low
+        action_high = env.action_space.high
+
+        self.actor = GaussianActor(
+            obs_dim,
+            action_dim,
+            action_low,
+            action_high,
+            hidden_dim,
+        ).to(self.device)
+
+        self.critic = DoubleCritic(obs_dim, action_dim, hidden_dim).to(self.device)
+        self.critic_target = DoubleCritic(obs_dim, action_dim, hidden_dim).to(self.device)
+        self.critic_target.load_state_dict(self.critic.state_dict())
+
+        self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=actor_lr)
+        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
+
+        self.target_entropy = -float(action_dim)
+        self.log_alpha = torch.tensor(
+            [np.log(alpha)],
+            dtype=torch.float32,
+            requires_grad=automatic_entropy_tuning,
+            device=self.device,
+        )
+        self.alpha_optim = (
+            torch.optim.Adam([self.log_alpha], lr=alpha_lr)
+            if automatic_entropy_tuning
+            else None
+        )
+        self.alpha = self.log_alpha.exp()
+
+        self.buffer = TorchReplayBuffer(
+            obs_dim,
+            action_dim,
+            buffer_size,
+            device=self.device,
+        )
+
+        self.total_steps = 0
+        self.training_info = []
+
+    # ------------------------------------------------------------------
+    # Action selection
+    # ------------------------------------------------------------------
+
+    def select_action(self, obs: np.ndarray, evaluate: bool = False) -> np.ndarray:
+        """Select a stochastic training action or deterministic eval action."""
+        if self.total_steps < self.warmup_steps and not evaluate:
+            return self.env.action_space.sample().astype(np.float32)
+
+        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+        with torch.no_grad():
+            if evaluate:
+                action = self.actor.act(obs_t)
+            else:
+                action, _ = self.actor.sample(obs_t)
+
+        return action.detach().cpu().numpy()[0].astype(np.float32)
+
+    # ------------------------------------------------------------------
+    # Learning update
+    # ------------------------------------------------------------------
+
+    def _update(self):
+        """Sample a batch and update SAC critic, actor, alpha, and target critic."""
+        batch = self.buffer.sample(self.batch_size)
+
+        states = batch["states"]
+        actions = batch["actions"]
+        rewards = batch["rewards"]
+        next_states = batch["next_states"]
+        dones = batch["dones"]
+
+        with torch.no_grad():
+            next_actions, next_log_probs = self.actor.sample(next_states)
+            q1_target, q2_target = self.critic_target(next_states, next_actions)
+            min_q_target = torch.min(q1_target, q2_target)
+            target_q = rewards + (1.0 - dones) * self.discount * (
+                min_q_target - self.alpha.detach() * next_log_probs
+            )
+
+        current_q1, current_q2 = self.critic(states, actions)
+        critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
+
+        self.critic_optim.zero_grad()
+        critic_loss.backward()
+        self.critic_optim.step()
+
+        sampled_actions, log_probs = self.actor.sample(states)
+        q1_pi, q2_pi = self.critic(states, sampled_actions)
+        min_q_pi = torch.min(q1_pi, q2_pi)
+        actor_loss = (self.alpha.detach() * log_probs - min_q_pi).mean()
+
+        self.actor_optim.zero_grad()
+        actor_loss.backward()
+        self.actor_optim.step()
+
+        if self.automatic_entropy_tuning:
+            alpha_loss = -(
+                self.log_alpha * (log_probs + self.target_entropy).detach()
+            ).mean()
+
+            self.alpha_optim.zero_grad()
+            alpha_loss.backward()
+            self.alpha_optim.step()
+            self.alpha = self.log_alpha.exp()
+        else:
+            alpha_loss = torch.tensor(0.0, device=self.device)
+
+        self._soft_update(self.critic, self.critic_target)
+
+        info = {
+            "critic_loss": float(critic_loss.detach().cpu()),
+            "actor_loss": float(actor_loss.detach().cpu()),
+            "alpha_loss": float(alpha_loss.detach().cpu()),
+            "alpha": float(self.alpha.detach().cpu()),
+        }
+        self.training_info.append(info)
+        return info["critic_loss"], info["actor_loss"], info["alpha_loss"], info["alpha"]
+
+    def _soft_update(self, online: torch.nn.Module, target: torch.nn.Module):
+        """theta_target <- tau * theta_online + (1 - tau) * theta_target"""
+        for online_p, target_p in zip(online.parameters(), target.parameters()):
+            target_p.data.copy_(self.tau * online_p.data + (1.0 - self.tau) * target_p.data)
+
+    # ------------------------------------------------------------------
+    # Checkpoints
+    # ------------------------------------------------------------------
+
+    def save_checkpoint(self, checkpoint_path=DEFAULT_SAC_CHECKPOINT_PATH):
+        checkpoint_path = _artifact_path(checkpoint_path)
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint = {
+            "actor": self.actor.state_dict(),
+            "critic": self.critic.state_dict(),
+            "critic_target": self.critic_target.state_dict(),
+            "actor_optim": self.actor_optim.state_dict(),
+            "critic_optim": self.critic_optim.state_dict(),
+            "log_alpha": self.log_alpha.detach().cpu(),
+            "alpha": float(self.alpha.detach().cpu()),
+            "alpha_optim": (
+                self.alpha_optim.state_dict()
+                if self.alpha_optim is not None
+                else None
+            ),
+            "automatic_entropy_tuning": self.automatic_entropy_tuning,
+            "total_steps": self.total_steps,
+        }
+        torch.save(checkpoint, checkpoint_path)
+        print(f"SAC checkpoint saved to {checkpoint_path}")
+
+    def load_checkpoint(self, checkpoint_path=DEFAULT_SAC_CHECKPOINT_PATH, load_optimizers: bool = True):
+        checkpoint_path = _artifact_path(checkpoint_path)
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+
+        self.actor.load_state_dict(checkpoint["actor"])
+        self.critic.load_state_dict(checkpoint["critic"])
+        self.critic_target.load_state_dict(checkpoint["critic_target"])
+
+        if load_optimizers:
+            if "actor_optim" in checkpoint:
+                self.actor_optim.load_state_dict(checkpoint["actor_optim"])
+            if "critic_optim" in checkpoint:
+                self.critic_optim.load_state_dict(checkpoint["critic_optim"])
+            if self.alpha_optim is not None and checkpoint.get("alpha_optim") is not None:
+                self.alpha_optim.load_state_dict(checkpoint["alpha_optim"])
+
+        if "log_alpha" in checkpoint:
+            self.log_alpha.data.copy_(checkpoint["log_alpha"].to(self.device))
+            self.alpha = self.log_alpha.exp()
+        elif "alpha" in checkpoint:
+            alpha_value = torch.tensor([checkpoint["alpha"]], dtype=torch.float32, device=self.device)
+            self.log_alpha.data.copy_(alpha_value.log())
+            self.alpha = self.log_alpha.exp()
+
+        self.total_steps = int(checkpoint.get("total_steps", self.total_steps))
+        print(f"SAC checkpoint loaded from {checkpoint_path}")
+        return checkpoint
+
+    # ------------------------------------------------------------------
+    # Training loop
+    # ------------------------------------------------------------------
+
+    def train_recorded(
+        self,
+        num_episodes: int,
+        video_folder: str = "videos/training_sac",
+        record_every: int = 100,
+        log_every: int = 100,
+        name_prefix: str = "sac_diff_drive_training",
+        checkpoint_path=DEFAULT_SAC_CHECKPOINT_PATH,
+        plot_path=DEFAULT_SAC_PLOT_PATH,
+        plot_path2=DEFAULT_SAC_PLOT_PATH2,
+    ):
+        video_folder = _artifact_path(video_folder)
+        video_folder.mkdir(parents=True, exist_ok=True)
+        checkpoint_path = _artifact_path(checkpoint_path)
+        plot_path = _artifact_path(plot_path)
+        plot_path2 = _artifact_path(plot_path2)
+
+        env = RecordVideo(
+            self.env,
+            video_folder=str(video_folder),
+            name_prefix=name_prefix,
+            episode_trigger=lambda ep: record_every > 0 and ep % record_every == 0,
+        )
+        env = RecordEpisodeStatistics(env, buffer_length=num_episodes)
+
+        episode_rewards = []
+        episode_lengths = []
+        critic_losses = []
+        actor_losses = []
+        alpha_losses = []
+        alpha_values = []
+        episode_successes = []
+        episode_goal_distances = []
+
+        for ep in tqdm(range(num_episodes), desc="SAC Training"):
+            obs, _ = env.reset()
+            done = False
+            ep_reward = 0.0
+            ep_c_loss = []
+            ep_a_loss = []
+            ep_alpha_loss = []
+            ep_alpha_values = []
+            info = {}
+
+            while not done:
+                action = self.select_action(obs, evaluate=False)
+                next_obs, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+
+                self.buffer.add(obs, action, reward, next_obs, done)
+                obs = next_obs
+                ep_reward += reward
+                self.total_steps += 1
+
+                if self.buffer.ready(self.batch_size) and self.total_steps >= self.warmup_steps:
+                    critic_loss, actor_loss, alpha_loss, alpha_value = self._update()
+                    ep_c_loss.append(critic_loss)
+                    ep_a_loss.append(actor_loss)
+                    ep_alpha_loss.append(alpha_loss)
+                    ep_alpha_values.append(alpha_value)
+
+            episode_rewards.append(ep_reward)
+            episode_lengths.append(list(env.length_queue)[-1])
+            episode_successes.append(1 if info.get("goal_reached", False) else 0)
+            episode_goal_distances.append(float(info.get("dist_to_goal", np.nan)))
+
+            if ep_c_loss:
+                critic_losses.append(float(np.mean(ep_c_loss)))
+            if ep_a_loss:
+                actor_losses.append(float(np.mean(ep_a_loss)))
+            if ep_alpha_loss:
+                alpha_losses.append(float(np.mean(ep_alpha_loss)))
+            if ep_alpha_values:
+                alpha_values.append(float(np.mean(ep_alpha_values)))
+
+            if (ep + 1) % log_every == 0:
+                avg_reward = np.mean(episode_rewards[-log_every:])
+                avg_success = np.mean(episode_successes[-log_every:])
+                avg_goal_dist = np.nanmean(episode_goal_distances[-log_every:])
+                avg_actor_loss = np.mean(actor_losses[-log_every:]) if actor_losses else 0.0
+                avg_critic_loss = np.mean(critic_losses[-log_every:]) if critic_losses else 0.0
+                avg_alpha_loss = np.mean(alpha_losses[-log_every:]) if alpha_losses else 0.0
+                print(
+                    f"Episode {ep+1:>5} | "
+                    f"avg reward: {avg_reward:.2f} | "
+                    f"success: {avg_success:.2f} | "
+                    f"avg dist: {avg_goal_dist:.2f} | "
+                    f"actor loss: {avg_actor_loss:.4f} | "
+                    f"critic loss: {avg_critic_loss:.4f} | "
+                    f"alpha loss: {avg_alpha_loss:.4f} | "
+                    f"buffer: {len(self.buffer):>6} | "
+                    f"steps: {self.total_steps}"
+                )
+
+        self.save_checkpoint(checkpoint_path)
+        env.close()
+        self._plot(
+            episode_rewards,
+            episode_lengths,
+            critic_losses,
+            actor_losses,
+            alpha_losses,
+            alpha_values,
+            episode_successes,
+            episode_goal_distances,
+            plot_path=plot_path,
+            plot_path2=plot_path2,
+        )
+
+    # ------------------------------------------------------------------
+    # Evaluation
+    # ------------------------------------------------------------------
+
+    def eval_recorded(
+        self,
+        video_folder: str = "videos/evaluation_sac",
+        name_prefix: str = "sac_diff_drive_eval",
+        n_episodes: int = 3,
+    ):
+        """Run deterministic SAC episodes and record videos."""
+        video_folder = _artifact_path(video_folder)
+        video_folder.mkdir(parents=True, exist_ok=True)
+
+        env = RecordVideo(
+            self.env,
+            video_folder=str(video_folder),
+            name_prefix=name_prefix,
+            episode_trigger=lambda ep: True,
+        )
+        env = RecordEpisodeStatistics(env)
+
+        for ep in range(n_episodes):
+            obs, _ = env.reset()
+            done = False
+            info = {}
+
+            while not done:
+                action = self.select_action(obs, evaluate=True)
+                obs, _, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+
+            total_reward = list(env.return_queue)[-1]
+            total_steps = list(env.length_queue)[-1]
+            goal = "yes" if info.get("goal_reached") else "no"
+            print(
+                f"  SAC eval ep {ep+1}: reward = {total_reward:.1f} | "
+                f"steps = {total_steps} | goal reached: {goal}"
+            )
+
+        env.close()
+
+    def evaluate(self, n_episodes: int = 5):
+        """Run deterministic SAC evaluation without video recording."""
+        for ep in range(n_episodes):
+            obs, _ = self.env.reset()
+            done = False
+            total_reward = 0.0
+
+            while not done:
+                action = self.select_action(obs, evaluate=True)
+                obs, reward, terminated, truncated, _ = self.env.step(action)
+                done = terminated or truncated
+                total_reward += reward
+
+            print(f"SAC eval episode {ep+1}: reward = {total_reward:.2f}")
+
+    # ------------------------------------------------------------------
+    # Plotting
+    # ------------------------------------------------------------------
+
+    def _plot(
+        self,
+        rewards,
+        lengths,
+        critic_losses,
+        actor_losses,
+        alpha_losses,
+        alpha_values,
+        successes,
+        goal_distances,
+        plot_path=DEFAULT_SAC_PLOT_PATH,
+        plot_path2=DEFAULT_SAC_PLOT_PATH2,
+    ):
+        plot_path = _artifact_path(plot_path)
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        plot_path2 = _artifact_path(plot_path2)
+        plot_path2.parent.mkdir(parents=True, exist_ok=True)
+
+        fig, axes = plt.subplots(2, 2, figsize=(16, 8))
+        fig.suptitle("SAC Training Curves", fontsize=14, fontweight="bold")
+
+        episodes = np.arange(1, len(rewards) + 1)
+        axes[0, 0].plot(episodes, rewards, color="steelblue", alpha=0.7, linewidth=0.9)
+        axes[0, 0].set_title("Episode Reward")
+        axes[0, 0].set_ylabel("Reward")
+        axes[0, 0].grid(alpha=0.3)
+
+        axes[0, 1].plot(episodes, lengths, color="coral", alpha=0.7, linewidth=0.9)
+        axes[0, 1].set_title("Episode Length")
+        axes[0, 1].set_ylabel("Steps")
+        axes[0, 1].grid(alpha=0.3)
+
+        loss_x = np.arange(1, len(critic_losses) + 1)
+        axes[1, 0].plot(loss_x, critic_losses, color="tomato", alpha=0.8, linewidth=0.9)
+        axes[1, 0].set_title("Critic Loss")
+        axes[1, 0].set_ylabel("MSE Loss")
+        axes[1, 0].grid(alpha=0.3)
+
+        actor_x = np.arange(1, len(actor_losses) + 1)
+        axes[1, 1].plot(actor_x, actor_losses, color="mediumseagreen", alpha=0.8, linewidth=0.9, label="Actor")
+        alpha_x = np.arange(1, len(alpha_losses) + 1)
+        if len(alpha_losses) > 0:
+            axes[1, 1].plot(alpha_x, alpha_losses, color="mediumpurple", alpha=0.8, linewidth=0.9, label="Alpha")
+            axes[1, 1].legend(fontsize=8)
+        axes[1, 1].set_title("Actor / Alpha Loss")
+        axes[1, 1].grid(alpha=0.3)
+
+        plt.tight_layout()
+        fig.savefig(plot_path, dpi=150)
+        plt.close(fig)
+        print(f"SAC plot saved to {plot_path}")
+
+        fig2, axs2 = plt.subplots(1, 3, figsize=(18, 5))
+        axs2[0].plot(episodes, successes, color="mediumseagreen", linewidth=0.9)
+        axs2[0].set_title("Success")
+        axs2[0].set_ylim(-0.05, 1.05)
+        axs2[0].grid(alpha=0.3)
+
+        axs2[1].plot(episodes, goal_distances, color="steelblue", linewidth=0.9)
+        axs2[1].set_title("Final Distance to Goal")
+        axs2[1].grid(alpha=0.3)
+
+        alpha_value_x = np.arange(1, len(alpha_values) + 1)
+        axs2[2].plot(alpha_value_x, alpha_values, color="mediumpurple", linewidth=0.9)
+        axs2[2].set_title("Entropy Coefficient Alpha")
+        axs2[2].grid(alpha=0.3)
+
+        plt.tight_layout()
+        fig2.savefig(plot_path2, dpi=150)
+        plt.close(fig2)
+        print(f"SAC plot 2 saved to {plot_path2}")

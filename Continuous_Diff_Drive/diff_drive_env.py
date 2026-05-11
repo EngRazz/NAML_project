@@ -444,29 +444,63 @@ class DiffDriveEnv(gym.Env):
         #    terminated = False
 
         else:
+            # Alternative SAC reward experiment (reference only, from old standalone SAC env):
+            #
+            # progress = self.prev_dist - dist
+            # reward_progress = 10.0 * progress
+            #
+            # diff = self.goal_pos - self.robot_pos
+            # angle_glob = math.atan2(float(diff[1]), float(diff[0]))
+            # angle_err = abs((angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi)
+            # orientation_reward = 0.3 * (1.0 - angle_err / math.pi)
+            #
+            # min_lidar = np.min(curr_lidar)
+            # safety_penalty = 0.0
+            # if min_lidar < 0.8:
+            #     safety_penalty = -0.5 * (0.8 - min_lidar)
+            #
+            # angular_penalty = -0.02 * abs(v_angular)
+            # time_penalty = -0.01
+            #
+            # reward = (
+            #     reward_progress
+            #     + orientation_reward
+            #     + safety_penalty
+            #     + angular_penalty
+            #     + time_penalty
+            # )
+            #
+            # Timeout behavior in the old SAC env:
+            # if truncated and not terminated:
+            #     reward += self.TIMEOUT_REWARD
+            #
+            #
             # Fist versione:
-            #    reward, reward_components = self._reward_components(dist, curr_lidar)
+            reward, reward_components = self._reward_components(dist, curr_lidar)
+            #
+            #
             # Second version
             # 1. Progress: reward getting closer, penalise moving away
-            progress = (self.prev_dist - dist) * 8.0
-            min_lidar = np.min(self._last_lidar)
-            safety_reward = 0.0
-            if min_lidar < 0.2:
-                safety_reward = -5.0 # Penalità fissa per pericolo imminente
-            elif min_lidar < 0.5:
-                safety_reward = -2.0 * np.exp(-3.0 * min_lidar)
-            # 2. Orientation: reward facing the goal
-            diff       = self.goal_pos - self.robot_pos
-            angle_glob = math.atan2(float(diff[1]), float(diff[0]))
-            angle_err  = abs((angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi) #reward term for the robot not orientated toward the goal
-            orientation = (1.0 - angle_err / math.pi)  # 1.0 = facing goal, 0.0 = facing away
+            # progress = (self.prev_dist - dist) * 8.0
+            # min_lidar = np.min(self._last_lidar)
+            # safety_reward = 0.0
+            # if min_lidar < 0.2:
+            #     safety_reward = -5.0 # Penalità fissa per pericolo imminente
+            # elif min_lidar < 0.5:
+            #     safety_reward = -2.0 * np.exp(-3.0 * min_lidar)
+            # # 2. Orientation: reward facing the goal
+            # diff       = self.goal_pos - self.robot_pos
+            # angle_glob = math.atan2(float(diff[1]), float(diff[0]))
+            # angle_err  = abs((angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi) #reward term for the robot not orientated toward the goal
+            # orientation = (1.0 - angle_err / math.pi)  # 1.0 = facing goal, 0.0 = facing away
 
-            # 3. Time penalty: small cost per step to discourage spinning in place
-            time_penalty = -0.1 
-            inactivity_penalty = 0.0
-            if abs(v_linear) < 0.05:
-                inactivity_penalty = -0.5
-            reward     = progress + 0.1 * orientation + time_penalty + safety_reward + inactivity_penalty
+            # # 3. Time penalty: small cost per step to discourage spinning in place
+            # time_penalty = -0.1 
+            # inactivity_penalty = 0.0
+            # if abs(v_linear) < 0.05:
+            #     inactivity_penalty = -0.5
+            # reward     = progress + 0.1 * orientation + time_penalty + safety_reward + inactivity_penalty
+            
             terminated = False
 
         # Update previous state trackers

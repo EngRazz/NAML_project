@@ -1,8 +1,16 @@
 # Continuous Diff Drive
 
-This folder contains a continuous-control reinforcement learning experiment for a differential-drive robot. The objective is to train a circular robot to navigate a 2D room, avoid walls and rectangular obstacles using LiDAR readings, and reach a goal position. The current learning algorithm is DDPG, which is suitable for continuous actions such as linear and angular velocity.
+This folder contains a continuous-control reinforcement learning experiment for a differential-drive robot. The objective is to train a circular robot to navigate a 2D room, avoid walls and rectangular obstacles using LiDAR readings, and reach a goal position. The folder contains both DDPG and SAC agents so their behavior, training stability, and navigation performance can be compared on the same task.
 
-The project includes the environment, neural network models, replay buffer, DDPG agent, training notebook, evaluation notebook, saved checkpoint, plots, and generated videos.
+The project includes the environment, neural network models, replay buffers, DDPG and SAC agents, training notebooks, evaluation notebooks, a DDPG/SAC comparison notebook, saved checkpoints, plots, and generated videos.
+
+## Notebook Index
+
+- `train_ddpg.ipynb`: train DDPG and record DDPG training/evaluation artifacts.
+- `eval_ddpg.ipynb`: evaluate the saved DDPG checkpoint on fixed and random obstacle layouts.
+- `train_sac.ipynb`: train SAC with the shared environment and record SAC artifacts.
+- `eval_sac.ipynb`: evaluate the saved SAC checkpoint on fixed and random obstacle layouts.
+- `compare_ddpg_sac.ipynb`: run a direct DDPG-vs-SAC benchmark on the same fixed obstacle layout.
 
 ## Environment
 
@@ -85,8 +93,8 @@ The reward is shaped to encourage both reaching the goal and using LiDAR for obs
 
 Terminal rewards:
 
-- `+100` when the goal is reached;
-- `-50` on collision.
+- `+500` when the goal is reached;
+- `-200` on collision.
 
 For non-terminal steps, the reward combines:
 
@@ -105,15 +113,15 @@ When the LiDAR ray closest to the goal direction is blocked, the environment red
 
 When `random_obst=True`, the environment samples obstacle layouts using a curriculum. The default mix is:
 
-- `evaluate_like_detour`: jittered versions of the fixed evaluation layout, including blocked-diagonal cases;
-- `wall_with_gap`: long walls split by a passable gap;
-- `random_blocks`: smaller random rectangles.
+- `evaluate_like_detour` (`40%`): jittered versions of the fixed evaluation layout, including blocked-diagonal cases;
+- `wall_with_gap` (`40%`): long walls split by a passable gap;
+- `random_blocks` (`20%`): smaller random rectangles.
 
-Before accepting a sampled layout, the environment runs a lightweight grid-based feasibility check. Obstacles are inflated by the robot radius, and a BFS search checks that a path from start to goal exists. This avoids training on impossible maps.
+Before accepting a sampled layout, the environment runs a lightweight grid-based feasibility check. Obstacles are inflated by `robot_radius + 0.05`, and a BFS search checks that a path from start to goal exists. This avoids training on impossible maps.
 
 ## DDPG Agent
 
-The agent is implemented in `diff_drive_agent.py` as `DiffDriveAgent`.
+The agent is implemented in `diff_drive_agent.py` as `DiffDriveDDPGAgent`.
 
 It uses DDPG, an actor-critic algorithm for continuous action spaces. The agent contains:
 
@@ -259,19 +267,189 @@ for each episode:
 - It is usually less stable than TD3 or SAC on harder continuous-control problems.
 
 
+## SAC Agent
+
+The SAC agent is implemented in `diff_drive_agent.py` as `DiffDriveSACAgent`, next to the DDPG `DiffDriveDDPGAgent`. Both agents now use the same `DiffDriveEnv`, observation space, action space, reward, obstacle curriculum, and rendering path. This makes the DDPG/SAC comparison cleaner because algorithm differences are not mixed with environment differences.
+
+SAC stands for Soft Actor-Critic. Like DDPG, it is an off-policy actor-critic method for continuous actions. The main difference is that SAC learns a stochastic policy and explicitly rewards entropy. This means the policy is encouraged to keep exploring useful alternatives instead of becoming deterministic too early.
+
+The SAC agent contains:
+
+- a Gaussian stochastic actor;
+- a double critic with two Q-functions;
+- a target double critic;
+- automatic entropy tuning through a learnable `alpha`;
+- a PyTorch replay buffer;
+- training and evaluation loops with video recording.
+
+### Gaussian Actor
+
+The actor is defined in `networks.py` as `GaussianActor`. It maps an observation to the parameters of a Gaussian action distribution:
+
+```text
+observation -> Linear -> ReLU -> Linear -> ReLU -> mean head
+                                                   log_std head
+```
+
+The actor outputs:
+
+- `mu`: the mean of the Gaussian policy;
+- `log_std`: the log standard deviation, clamped to a safe range.
+
+During training, actions are sampled from this distribution using the reparameterization trick. The sampled action is passed through `tanh` and then rescaled to the environment action bounds. The `tanh` correction is included in the log-probability calculation, which is necessary because squashing changes the probability density.
+
+During evaluation, the actor uses the deterministic mean action. This makes evaluation videos easier to interpret and reduces randomness when comparing SAC with DDPG.
+
+### Double Critic
+
+The critic is defined in `networks.py` as `DoubleCritic`. It contains two separate Q-networks:
+
+```text
+Q1(observation, action)
+Q2(observation, action)
+```
+
+Both critics receive the concatenated observation and action. SAC uses the minimum of the two Q-values when computing targets and policy updates. This is called clipped double-Q learning, and it reduces the positive overestimation bias that can appear when using a single critic.
+
+The SAC implementation also keeps a target double critic. The target critic is a slowly updated copy of the online critic and is used to compute stable Bellman targets.
+
+### Entropy Coefficient
+
+SAC optimizes both reward and entropy. The entropy coefficient `alpha` controls the tradeoff:
+
+- high `alpha`: more exploration and more random actions;
+- low `alpha`: more exploitation of the current best policy.
+
+The implementation supports automatic entropy tuning. When enabled, `log_alpha` is learned with its own optimizer so that the policy entropy stays close to a target value. This removes the need to hand-tune a fixed exploration coefficient for every experiment.
+
+### Replay Buffer
+
+The SAC replay buffer is implemented in `replay_buffer.py` as `TorchReplayBuffer`. It stores:
+
+```text
+(state, action, reward, next_state, done)
+```
+
+SAC is off-policy, so it can reuse old transitions. This is important because neural network updates need random mini-batches rather than highly correlated consecutive transitions. `TorchReplayBuffer` stores data as CPU PyTorch tensors and moves sampled batches to the selected device during sampling, while the original NumPy `ReplayBuffer` remains available for DDPG.
+
+### Shared Environment
+
+SAC uses the same `DiffDriveEnv` as DDPG. There is no separate SAC environment path. This means SAC trains from the same LiDAR-based observation vector and controls the same continuous differential-drive action interface:
+
+```text
+observation = [lidar readings, distance_to_goal, relative_goal_angle]
+action      = [linear_velocity, angular_velocity]
+```
+
+The old experimental SAC reward was preserved as a commented reference block inside `diff_drive_env.py` under `Alternative SAC reward experiment`, but it is not active. This keeps the reward idea available for later design discussion without changing the current shared environment behavior.
+
+## SAC Algorithm
+
+SAC maximizes a soft objective:
+
+```text
+expected return + alpha * policy entropy
+```
+
+The entropy term rewards policies that remain stochastic. In this navigation task, that is useful because obstacle layouts can require detours, and a deterministic policy may prematurely commit to poor local behaviors. SAC's stochastic policy usually explores more robustly than DDPG, especially in narrow passages or blocked-direct-path scenarios.
+
+### Pseudocode
+
+```text
+Initialize Gaussian actor pi(a | s)
+Initialize double critic Q1(s, a), Q2(s, a)
+Initialize target critics Q1_target, Q2_target
+Initialize entropy coefficient alpha, or learn log_alpha automatically
+Initialize replay buffer
+
+for each episode:
+    reset environment
+    observe state s
+
+    while episode is not done:
+        if warmup is active:
+            choose random action a
+        else:
+            sample action a from pi(a | s)
+
+        execute action a in environment
+        observe reward r, next state s_next, and done flag
+        store (s, a, r, s_next, done) in replay buffer
+
+        if replay buffer has enough samples:
+            sample random batch from replay buffer
+
+            sample next action a_next from pi(a | s_next)
+            compute log probability log_pi(a_next | s_next)
+
+            target_q = r + gamma * (1 - done) *
+                       (min(Q1_target(s_next, a_next),
+                            Q2_target(s_next, a_next))
+                        - alpha * log_pi(a_next | s_next))
+
+            update Q1 and Q2 by minimizing Bellman error
+
+            sample action a_pi from pi(a | s)
+            update actor by minimizing:
+                alpha * log_pi(a_pi | s) - min(Q1(s, a_pi), Q2(s, a_pi))
+
+            if automatic entropy tuning is enabled:
+                update alpha toward the target entropy
+
+            softly update target critics:
+                target = tau * critic + (1 - tau) * target
+
+        s = s_next
+```
+
+### Advantages
+
+- Works with continuous action spaces.
+- Learns a stochastic policy, which usually explores better than DDPG.
+- Uses entropy regularization, reducing premature convergence to a narrow policy.
+- Uses twin critics, reducing Q-value overestimation.
+- Often more stable than DDPG on difficult navigation tasks.
+
+### Limitations
+
+- More complex than DDPG: it has actor, twin critics, target critics, and entropy tuning.
+- More hyperparameters and losses must be monitored.
+- Training can be slower per update because two critics and stochastic policy log-probabilities are computed.
+- The final policy can still fail if the reward or obstacle curriculum does not represent the evaluation scenarios.
+- The current SAC code is intended for comparison, but its final performance should be validated with training curves, success rate, and fixed-obstacle evaluation videos.
+
 ## Folder Structure
 
 ```text
 Continuous_Diff_Drive/
-  diff_drive_env.py      # Gymnasium environment, LiDAR, reward, obstacle sampling, rendering
-  diff_drive_agent.py    # DDPG agent, training loop, evaluation loop, plots
-  networks.py            # Actor, critic, OU noise, weight initialization
-  replay_buffer.py       # Circular replay buffer for off-policy learning
-  train_ddpg.ipynb       # Training workflow and random/curriculum evaluation
-  eval_ddpg.ipynb        # Fixed-obstacle checkpoint evaluation
-  models/                # Saved DDPG checkpoint
-  images/                # Training plots
-  videos/                # Training and evaluation videos
+  README.md                 # This folder guide
+  diff_drive_env.py         # Shared environment, LiDAR, reward, obstacle sampling, rendering
+  diff_drive_agent.py       # DDPG and SAC agents, training loops, evaluation loops, plots
+  networks.py               # DDPG actor/critic/OU noise and SAC Gaussian actor/double critic
+  replay_buffer.py          # DDPG NumPy replay buffer and SAC TorchReplayBuffer
+
+  train_ddpg.ipynb          # DDPG training workflow and random/curriculum evaluation
+  eval_ddpg.ipynb           # DDPG fixed-obstacle and random-obstacle checkpoint evaluation
+  train_sac.ipynb           # SAC training workflow and deterministic evaluation
+  eval_sac.ipynb            # SAC fixed-obstacle and random-obstacle checkpoint evaluation
+  compare_ddpg_sac.ipynb    # Direct DDPG vs SAC benchmark on the same fixed map
+
+  models/
+    ddpg_checkpoint.pt      # Current DDPG checkpoint
+    ddpg_checkpoint_V1.pt   # Earlier DDPG checkpoint snapshot
+    sac_checkpoint.pt       # Created after running SAC training
+
+  images/
+    ddpg_diff_drive_training_curves.png
+    sac_diff_drive_training_curves.png   # Created after running SAC training
+    sac_diff_drive_training_curves2.png  # Created after running SAC training
+
+  videos/
+    training/               # DDPG training videos
+    evaluation/             # DDPG evaluation videos
+    training_sac/           # SAC training videos
+    evaluation_sac/         # SAC evaluation videos
+    comparison/             # Created by the DDPG vs SAC comparison notebook
 ```
 
 ## Notebooks
@@ -298,6 +476,48 @@ This notebook loads the saved checkpoint from:
 models/ddpg_checkpoint.pt
 ```
 
-It evaluates the trained policy on a fixed unseen obstacle layout, including a blocked-diagonal configuration. This is useful for checking whether the agent has learned obstacle-aware detours rather than only moving directly toward the goal.
+It evaluates the trained policy on a fixed unseen obstacle layout, including a blocked-diagonal configuration, and also includes a random-obstacle evaluation section. This is useful for checking whether the agent has learned obstacle-aware detours rather than only moving directly toward the goal.
 
 Use this notebook when testing a trained model without running training again.
+
+### `train_sac.ipynb`
+
+This notebook is the SAC workflow. It:
+
+- configures the shared environment and SAC hyperparameters;
+- creates `DiffDriveSACAgent`;
+- trains the Gaussian policy with twin critics;
+- saves a SAC checkpoint to `models/sac_checkpoint.pt`;
+- records SAC training and evaluation videos;
+- saves SAC training plots.
+
+Use this notebook when training the SAC agent for comparison with DDPG. The intended comparison is based on reward curves, success rate, training stability, and performance on fixed obstacle layouts.
+
+### `eval_sac.ipynb`
+
+This notebook loads the saved checkpoint from:
+
+```text
+models/sac_checkpoint.pt
+```
+
+It evaluates SAC on the same fixed unseen obstacle layout used by `eval_ddpg.ipynb`, then also runs the random-obstacle evaluation section. Videos are saved under:
+
+```text
+videos/evaluation_sac/
+```
+
+Use this notebook when testing a trained SAC model without running training again.
+
+### `compare_ddpg_sac.ipynb`
+
+This notebook loads both checkpoints:
+
+```text
+models/ddpg_checkpoint.pt
+models/sac_checkpoint.pt
+```
+
+It creates separate DDPG and SAC agents with the same `DiffDriveEnv` configuration, evaluates both greedily on the same fixed obstacle map, records comparison videos, and prints a compact table with reward, steps, final distance, collision status, goal status, and success rate.
+
+Use this notebook when you want an apples-to-apples comparison between the deterministic DDPG policy and the deterministic evaluation path of the SAC policy.
