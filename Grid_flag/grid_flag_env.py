@@ -122,7 +122,7 @@ class GridFlagEnv(gym.Env):
 
         # Episode ends when time runs out
         if len(self.remaining_flags) == 0 and self._completion_countdown == 0:
-            self._completion_countdown = 20   # ~2 seconds at 10 FPS
+            self._completion_countdown = 2   # ~0.2 seconds at 10 FPS to wait
         if self._completion_countdown > 0:
             self._completion_countdown -= 1
         terminated = self._completion_countdown == 0 and len(self.remaining_flags) == 0
