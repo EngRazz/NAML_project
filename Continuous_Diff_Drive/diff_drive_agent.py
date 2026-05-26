@@ -18,6 +18,9 @@ DEFAULT_PLOT_PATH2 = BASE_DIR / "images" / "ddpg_diff_drive_training_curves2.png
 DEFAULT_SAC_CHECKPOINT_PATH = BASE_DIR / "models" / "sac_checkpoint.pt"
 DEFAULT_SAC_PLOT_PATH = BASE_DIR / "images" / "sac_diff_drive_training_curves.png"
 DEFAULT_SAC_PLOT_PATH2 = BASE_DIR / "images" / "sac_diff_drive_training_curves2.png"
+DEFAULT_TD3_CHECKPOINT_PATH = BASE_DIR / "models" / "td3_checkpoint.pt"
+DEFAULT_TD3_PLOT_PATH = BASE_DIR / "images" / "td3_diff_drive_training_curves.png"
+DEFAULT_TD3_PLOT_PATH2 = BASE_DIR / "images" / "td3_diff_drive_training_curves2.png"
 
 
 def _artifact_path(path):
@@ -900,3 +903,237 @@ class DiffDriveSACAgent:
         fig2.savefig(plot_path2, dpi=150)
         plt.close(fig2)
         print(f"SAC plot 2 saved to {plot_path2}")
+
+
+class DiffDriveTD3Agent:
+    """
+    TD3 improves on DDPG with three tricks:
+      1. Twin critics            -> reduce Q-value overestimation by taking
+                                    min(Q1, Q2) when computing the TD target.
+      2. Delayed actor updates   -> update the actor (and its target) every
+                                    `policy_delay` critic updates, not every step.
+      3. Target policy smoothing -> add small clipped Gaussian noise to the
+                                    target actor's action when computing the
+                                    target Q-value, so the critic does not
+                                    over-fit to narrow Q-value spikes.
+
+    Networks:
+        actor         -> deterministic policy (reuses Actor from networks.py)
+        actor_target  -> slow copy of actor
+        critic        -> twin Q-networks (reuses DoubleCritic from networks.py)
+        critic_target -> slow copy of critic
+    """
+
+    def __init__(
+        self,
+        env: DiffDriveEnv,
+        actor_lr:          float = 1e-4,
+        critic_lr:         float = 1e-3,
+        discount:          float = 0.99,   # gamma
+        tau:               float = 0.005,  # soft-update rate for target networks
+        policy_delay:      int   = 2,      # actor updated every N critic updates
+        target_noise_std:  float = 0.2,    # Trick 3: stddev of target smoothing noise
+        target_noise_clip: float = 0.5,    # Trick 3: clip noise to +/- this value
+        expl_noise_std:    float = 0.1,    # stddev of Gaussian exploration noise
+        batch_size:        int   = 256,
+        buffer_size:       int   = 100_000,
+        hidden_dim:        int   = 256,
+        warmup_steps:      int   = 1_000,  # random actions before training starts
+        device:            str   = "cpu",
+    ):
+        self.env               = env
+        self.discount          = discount
+        self.tau               = tau
+        self.policy_delay      = policy_delay
+        self.target_noise_std  = target_noise_std
+        self.target_noise_clip = target_noise_clip
+        self.expl_noise_std    = expl_noise_std
+        self.batch_size        = batch_size
+        self.warmup_steps      = warmup_steps
+        self.device            = torch.device(device)
+
+        obs_dim     = env.observation_space.shape[0]
+        action_dim  = env.action_space.shape[0]
+        action_low  = env.action_space.low
+        action_high = env.action_space.high
+
+        # Cache action bounds as tensors on the right device (used for clipping in _update)
+        self.action_low_t  = torch.as_tensor(action_low,  dtype=torch.float32, device=self.device)
+        self.action_high_t = torch.as_tensor(action_high, dtype=torch.float32, device=self.device)
+
+        # ── Networks ──────────────────────────────────────────────────
+        # Deterministic actor (same architecture as DDPG)
+        self.actor        = Actor(obs_dim, action_dim, action_low, action_high, hidden_dim).to(self.device)
+        self.actor_target = Actor(obs_dim, action_dim, action_low, action_high, hidden_dim).to(self.device)
+        self.actor.apply(init_weights)
+        self.actor_target.load_state_dict(self.actor.state_dict())
+
+        # Twin critics (same DoubleCritic class SAC uses)
+        self.critic        = DoubleCritic(obs_dim, action_dim, hidden_dim).to(self.device)
+        self.critic_target = DoubleCritic(obs_dim, action_dim, hidden_dim).to(self.device)
+        self.critic_target.load_state_dict(self.critic.state_dict())
+
+        # ── Optimisers ────────────────────────────────────────────────
+        self.actor_optim  = torch.optim.Adam(self.actor.parameters(),  lr=actor_lr)
+        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
+
+        # ── Replay buffer (NumPy, same one DDPG uses) ─────────────────
+        self.buffer = ReplayBuffer(obs_dim, action_dim, buffer_size)
+
+        # ── Bookkeeping ───────────────────────────────────────────────
+        self.total_steps   = 0   # env steps taken so far
+        self.total_updates = 0   # gradient updates done so far (drives policy_delay)
+        self.training_info = []  # per-update losses
+
+    # ------------------------------------------------------------------
+    # Action selection
+    # ------------------------------------------------------------------
+
+    def select_action(self, obs: np.ndarray, add_noise: bool = True) -> np.ndarray:
+        """
+        Choose an action given an observation.
+
+        During training (add_noise=True) Gaussian noise is added to the actor's
+        output for exploration. TD3 uses plain Gaussian noise (not OU like DDPG)
+        — simpler, and equally effective in the original paper.
+
+        At evaluation time set add_noise=False for pure exploitation.
+        """
+        # Warm-up phase: take random actions to fill the buffer with diverse data
+        if add_noise and self.total_steps < self.warmup_steps:
+            return self.env.action_space.sample().astype(np.float32)
+
+        # Forward pass through the deterministic actor
+        obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            action = self.actor(obs_t).cpu().numpy()[0]
+
+        if add_noise:
+            # Gaussian exploration noise, then clip to action bounds
+            noise  = np.random.normal(0.0, self.expl_noise_std, size=action.shape)
+            action = np.clip(
+                action + noise,
+                self.env.action_space.low,
+                self.env.action_space.high,
+            )
+
+        return action.astype(np.float32)
+
+    # ------------------------------------------------------------------
+    # Learning update
+    # ------------------------------------------------------------------
+
+    def _update(self):
+        """
+        Sample a batch and apply the three TD3 tricks:
+          1. Twin critics with clipped double-Q     (min of Q1, Q2 in target)
+          2. Delayed actor updates                  (actor only every policy_delay steps)
+          3. Target policy smoothing                (clipped Gaussian noise on target action)
+        """
+        batch = self.buffer.sample(self.batch_size)
+
+        states      = torch.FloatTensor(batch["states"]).to(self.device)
+        actions     = torch.FloatTensor(batch["actions"]).to(self.device)
+        rewards     = torch.FloatTensor(batch["rewards"]).to(self.device)
+        next_states = torch.FloatTensor(batch["next_states"]).to(self.device)
+        dones       = torch.FloatTensor(batch["dones"]).to(self.device)
+
+        # ── Compute TD target (no gradients) ──────────────────────────
+        with torch.no_grad():
+            # TRICK 3: target policy smoothing
+            #   a' = clip(actor_target(s') + clip(noise, -c, c),  a_low,  a_high)
+            noise = torch.randn_like(actions) * self.target_noise_std
+            noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip)
+
+            next_actions = self.actor_target(next_states) + noise
+            next_actions = torch.max(torch.min(next_actions, self.action_high_t), self.action_low_t)
+
+            # TRICK 1: twin critics, take the MIN of the two Q estimates
+            q1_target, q2_target = self.critic_target(next_states, next_actions)
+            min_q_target         = torch.min(q1_target, q2_target)
+
+            # Bellman target: r + γ * min_Q(s', a')  (zero if episode ended)
+            target_q = rewards + self.discount * (1.0 - dones) * min_q_target
+
+        # ── Critic update (both Q1 and Q2 trained jointly) ────────────
+        current_q1, current_q2 = self.critic(states, actions)
+        critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
+
+        self.critic_optim.zero_grad()
+        critic_loss.backward()
+        self.critic_optim.step()
+
+        self.total_updates += 1
+        actor_loss_value = None
+
+        # ── TRICK 2: Delayed actor + target updates ───────────────────
+        if self.total_updates % self.policy_delay == 0:
+            # Maximise Q1(s, actor(s))  ≡  minimise -Q1(s, actor(s))
+            # We use only Q1 for the actor loss (standard TD3 practice).
+            actor_loss = -self.critic.q1(states, self.actor(states)).mean()
+
+            self.actor_optim.zero_grad()
+            actor_loss.backward()
+            self.actor_optim.step()
+
+            # Soft-update BOTH target networks only when the actor is updated
+            self._soft_update(self.actor,  self.actor_target)
+            self._soft_update(self.critic, self.critic_target)
+
+            actor_loss_value = float(actor_loss.detach().cpu())
+
+        critic_loss_value = float(critic_loss.detach().cpu())
+
+        self.training_info.append({
+            "critic_loss": critic_loss_value,
+            "actor_loss":  actor_loss_value,   # may be None on non-delayed steps
+        })
+        return critic_loss_value, actor_loss_value
+
+    def _soft_update(self, online: torch.nn.Module, target: torch.nn.Module):
+        """θ_target ← τ * θ_online + (1 - τ) * θ_target"""
+        for online_p, target_p in zip(online.parameters(), target.parameters()):
+            target_p.data.copy_(self.tau * online_p.data + (1.0 - self.tau) * target_p.data)
+
+    # ------------------------------------------------------------------
+    # Checkpoints
+    # ------------------------------------------------------------------
+
+    def save_checkpoint(self, checkpoint_path=DEFAULT_TD3_CHECKPOINT_PATH):
+        """Persist all networks, optimisers, and training counters to disk."""
+        checkpoint_path = _artifact_path(checkpoint_path)
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint = {
+            "actor":         self.actor.state_dict(),
+            "actor_target":  self.actor_target.state_dict(),
+            "critic":        self.critic.state_dict(),
+            "critic_target": self.critic_target.state_dict(),
+            "actor_optim":   self.actor_optim.state_dict(),
+            "critic_optim":  self.critic_optim.state_dict(),
+            "total_steps":   self.total_steps,
+            "total_updates": self.total_updates,
+        }
+        torch.save(checkpoint, checkpoint_path)
+        print(f"TD3 checkpoint saved to {checkpoint_path}")
+
+    def load_checkpoint(self, checkpoint_path=DEFAULT_TD3_CHECKPOINT_PATH, load_optimizers: bool = True):
+        """Restore networks, optimisers, and training counters from disk."""
+        checkpoint_path = _artifact_path(checkpoint_path)
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+
+        self.actor.load_state_dict(checkpoint["actor"])
+        self.actor_target.load_state_dict(checkpoint["actor_target"])
+        self.critic.load_state_dict(checkpoint["critic"])
+        self.critic_target.load_state_dict(checkpoint["critic_target"])
+
+        if load_optimizers:
+            if "actor_optim" in checkpoint:
+                self.actor_optim.load_state_dict(checkpoint["actor_optim"])
+            if "critic_optim" in checkpoint:
+                self.critic_optim.load_state_dict(checkpoint["critic_optim"])
+
+        self.total_steps   = int(checkpoint.get("total_steps",   self.total_steps))
+        self.total_updates = int(checkpoint.get("total_updates", self.total_updates))
+
+        print(f"TD3 checkpoint loaded from {checkpoint_path}")
+        return checkpoint
