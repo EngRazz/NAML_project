@@ -1331,3 +1331,60 @@ class DiffDriveTD3Agent:
         fig2.savefig(plot_path2, dpi=150)
         plt.close(fig2)
         print(f"TD3 plot 2 saved to {plot_path2}")
+
+    # ------------------------------------------------------------------
+    # Evaluation
+    # ------------------------------------------------------------------
+
+    def eval_recorded(
+        self,
+        video_folder: str = "videos/evaluation_td3",
+        name_prefix:  str = "td3_diff_drive_eval",
+        n_episodes:   int = 3,
+    ):
+        """Run n_episodes deterministic (greedy) episodes and record videos."""
+        video_folder = _artifact_path(video_folder)
+        video_folder.mkdir(parents=True, exist_ok=True)
+
+        env = RecordVideo(
+            self.env,
+            video_folder=str(video_folder),
+            name_prefix=name_prefix,
+            episode_trigger=lambda ep: True,   # record every eval episode
+        )
+        env = RecordEpisodeStatistics(env)
+
+        for ep in range(n_episodes):
+            obs, _ = env.reset()
+            done   = False
+            info   = {}
+
+            while not done:
+                action = self.select_action(obs, add_noise=False)
+                obs, _, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+
+            total_reward = list(env.return_queue)[-1]
+            total_steps  = list(env.length_queue)[-1]
+            goal = "yes" if info.get("goal_reached") else "no"
+            print(
+                f"  TD3 eval ep {ep+1}: reward = {total_reward:.1f} | "
+                f"steps = {total_steps} | goal reached: {goal}"
+            )
+
+        env.close()
+
+    def evaluate(self, n_episodes: int = 5):
+        """Run deterministic episodes without recording (quick numeric check)."""
+        for ep in range(n_episodes):
+            obs, _ = self.env.reset()
+            done = False
+            total_reward = 0.0
+
+            while not done:
+                action = self.select_action(obs, add_noise=False)
+                obs, reward, terminated, truncated, _ = self.env.step(action)
+                done = terminated or truncated
+                total_reward += reward
+
+            print(f"TD3 eval episode {ep+1}: reward = {total_reward:.2f}")
