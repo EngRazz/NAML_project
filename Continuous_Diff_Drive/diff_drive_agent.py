@@ -1137,3 +1137,197 @@ class DiffDriveTD3Agent:
 
         print(f"TD3 checkpoint loaded from {checkpoint_path}")
         return checkpoint
+
+    # ------------------------------------------------------------------
+    # Training loop
+    # ------------------------------------------------------------------
+
+    def train_recorded(
+        self,
+        num_episodes:    int,
+        video_folder:    str  = "videos/training_td3",
+        record_every:    int  = 100,
+        log_every:       int  = 100,
+        name_prefix:     str  = "td3_diff_drive_training",
+        checkpoint_path       = DEFAULT_TD3_CHECKPOINT_PATH,
+        plot_path             = DEFAULT_TD3_PLOT_PATH,
+        plot_path2            = DEFAULT_TD3_PLOT_PATH2,
+    ):
+        """
+        Train TD3 for `num_episodes`, periodically recording videos and
+        printing progress. Saves a final checkpoint and two summary plots.
+        """
+        video_folder    = _artifact_path(video_folder)
+        video_folder.mkdir(parents=True, exist_ok=True)
+        checkpoint_path = _artifact_path(checkpoint_path)
+        plot_path       = _artifact_path(plot_path)
+        plot_path2      = _artifact_path(plot_path2)
+
+        env = RecordVideo(
+            self.env,
+            video_folder=str(video_folder),
+            name_prefix=name_prefix,
+            episode_trigger=lambda ep: record_every > 0 and ep % record_every == 0,
+        )
+        env = RecordEpisodeStatistics(env, buffer_length=num_episodes)
+
+        episode_rewards        = []
+        episode_lengths        = []
+        critic_losses          = []
+        actor_losses           = []
+        episode_successes      = []
+        episode_goal_distances = []
+
+        for ep in tqdm(range(num_episodes), desc="TD3 Training"):
+            obs, _    = env.reset()
+            done      = False
+            ep_reward = 0.0
+            ep_c_loss = []
+            ep_a_loss = []
+            info      = {}
+
+            while not done:
+                action = self.select_action(obs, add_noise=True)
+                next_obs, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+
+                self.buffer.add(obs, action, reward, next_obs, done)
+                obs              = next_obs
+                ep_reward       += reward
+                self.total_steps += 1
+
+                # Learn once buffer has enough data and warmup is over
+                if self.buffer.ready(self.batch_size) and self.total_steps >= self.warmup_steps:
+                    c_loss, a_loss = self._update()
+                    ep_c_loss.append(c_loss)
+                    if a_loss is not None:   # actor only updates every policy_delay steps
+                        ep_a_loss.append(a_loss)
+
+            episode_rewards.append(ep_reward)
+            episode_lengths.append(list(env.length_queue)[-1])
+            episode_successes.append(1 if info.get("goal_reached", False) else 0)
+            episode_goal_distances.append(float(info.get("dist_to_goal", np.nan)))
+
+            if ep_c_loss:
+                critic_losses.append(float(np.mean(ep_c_loss)))
+            if ep_a_loss:
+                actor_losses.append(float(np.mean(ep_a_loss)))
+
+            if (ep + 1) % log_every == 0:
+                avg_r      = np.mean(episode_rewards[-log_every:])
+                avg_succ   = np.mean(episode_successes[-log_every:])
+                avg_dist   = np.nanmean(episode_goal_distances[-log_every:])
+                avg_c_loss = np.mean(critic_losses[-log_every:]) if critic_losses else 0.0
+                avg_a_loss = np.mean(actor_losses[-log_every:])  if actor_losses  else 0.0
+                print(
+                    f"Episode {ep+1:>5} | "
+                    f"avg reward: {avg_r:.2f} | "
+                    f"success: {avg_succ:.2f} | "
+                    f"avg dist: {avg_dist:.2f} | "
+                    f"actor loss: {avg_a_loss:.4f} | "
+                    f"critic loss: {avg_c_loss:.4f} | "
+                    f"buffer: {len(self.buffer):>6} | "
+                    f"steps: {self.total_steps}"
+                )
+
+        self.save_checkpoint(checkpoint_path)
+        env.close()
+        self._plot(
+            episode_rewards,
+            episode_lengths,
+            critic_losses,
+            actor_losses,
+            episode_successes,
+            episode_goal_distances,
+            plot_path=plot_path,
+            plot_path2=plot_path2,
+        )
+
+    # ------------------------------------------------------------------
+    # Plotting
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def get_smooth_statistics(values, window: int):
+        """Rolling mean and std for a 1D sequence."""
+        values = np.asarray(values, dtype=np.float32)
+        if window <= 0:
+            raise ValueError("window must be positive")
+        if len(values) < window:
+            return np.array([], dtype=np.float32), np.array([], dtype=np.float32)
+        means = np.array([np.mean(values[i - window:i]) for i in range(window, len(values) + 1)], dtype=np.float32)
+        stds  = np.array([np.std(values[i - window:i])  for i in range(window, len(values) + 1)], dtype=np.float32)
+        return means, stds
+
+    def _plot(
+        self,
+        rewards,
+        lengths,
+        critic_losses,
+        actor_losses,
+        successes,
+        goal_distances,
+        plot_path  = DEFAULT_TD3_PLOT_PATH,
+        plot_path2 = DEFAULT_TD3_PLOT_PATH2,
+    ):
+        plot_path  = _artifact_path(plot_path)
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        plot_path2 = _artifact_path(plot_path2)
+        plot_path2.parent.mkdir(parents=True, exist_ok=True)
+
+        # ── Figure 1: rewards / lengths / losses ──────────────────────
+        fig, axes = plt.subplots(2, 2, figsize=(16, 8))
+        fig.suptitle("TD3 Training Curves", fontsize=14, fontweight="bold")
+
+        episodes = np.arange(1, len(rewards) + 1)
+
+        axes[0, 0].plot(episodes, rewards, color="steelblue", alpha=0.5, linewidth=0.8)
+        window = 100
+        if len(rewards) >= window:
+            means, stds = self.get_smooth_statistics(rewards, window)
+            x_axis = episodes[window - 1:]
+            axes[0, 0].plot(x_axis, means, color="orange", linewidth=1.5, label=f"MA({window})")
+            axes[0, 0].fill_between(x_axis, means - 2 * stds, means + 2 * stds,
+                                    color="orange", alpha=0.2, label="Confidence (2 std)")
+            axes[0, 0].legend(fontsize=8)
+        axes[0, 0].set_title("Episode Reward")
+        axes[0, 0].set_ylabel("Reward")
+        axes[0, 0].grid(alpha=0.3)
+
+        axes[0, 1].plot(episodes, lengths, color="coral", alpha=0.7, linewidth=0.9)
+        axes[0, 1].set_title("Episode Length")
+        axes[0, 1].set_ylabel("Steps")
+        axes[0, 1].grid(alpha=0.3)
+
+        c_eps = np.arange(1, len(critic_losses) + 1)
+        axes[1, 0].plot(c_eps, critic_losses, color="tomato", alpha=0.8, linewidth=0.9)
+        axes[1, 0].set_title("Critic Loss")
+        axes[1, 0].set_ylabel("MSE Loss")
+        axes[1, 0].grid(alpha=0.3)
+
+        a_eps = np.arange(1, len(actor_losses) + 1)
+        axes[1, 1].plot(a_eps, actor_losses, color="mediumseagreen", alpha=0.8, linewidth=0.9)
+        axes[1, 1].set_title("Actor Loss")
+        axes[1, 1].set_ylabel("-Q value")
+        axes[1, 1].grid(alpha=0.3)
+
+        plt.tight_layout()
+        fig.savefig(plot_path, dpi=150)
+        plt.close(fig)
+        print(f"TD3 plot saved to {plot_path}")
+
+        # ── Figure 2: success rate and final distance to goal ─────────
+        fig2, axs2 = plt.subplots(1, 2, figsize=(16, 5))
+        axs2[0].plot(episodes, successes, color="mediumseagreen", linewidth=0.9)
+        axs2[0].set_title("Success (1 = goal reached)")
+        axs2[0].set_ylim(-0.05, 1.05)
+        axs2[0].grid(alpha=0.3)
+
+        axs2[1].plot(episodes, goal_distances, color="steelblue", linewidth=0.9)
+        axs2[1].set_title("Final Distance to Goal")
+        axs2[1].grid(alpha=0.3)
+
+        plt.tight_layout()
+        fig2.savefig(plot_path2, dpi=150)
+        plt.close(fig2)
+        print(f"TD3 plot 2 saved to {plot_path2}")
