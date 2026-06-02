@@ -6,14 +6,20 @@ import gymnasium as gym
 from gymnasium import spaces
 
 # ===== Designed characteristics =====
-ROWS = 4
-COLS = 12
-MAP_SEED = 34       # fixed map per run (change to get a different map)
-N_CLIFFS = 12     # number of cliff tiles (not counting S/G)
-MAX_TRIES = 5000    # retries to ensure a valid path exists
-MAX_STEPS = 100
+ROWS = 5
+COLS = 16
+MAP_SEED = 34       # fixed map per run (only used when LAYOUT == "random")
+N_CLIFFS = 12       # number of cliff tiles (only used when LAYOUT == "random")
+MAX_TRIES = 5000    # retries to ensure a valid path exists (random layout only)
+MAX_STEPS = 200
 
-ENV_ID = "RandomCliffWalking-v1"
+# Map layout:
+#   "canonical" -> contiguous cliff along the whole bottom row between S and G
+#                  (the classic Sutton & Barto Cliff Walking)
+#   "random"    -> scattered random cliffs with a guaranteed S->G path.
+LAYOUT = "canonical"
+
+ENV_ID = "RandomCliffWalking-v2"
 
 # Actions: 0=Up, 1=Right, 2=Down, 3=Left
 ACTIONS = {
@@ -59,6 +65,28 @@ def _path_exists(
             seen.add((rr, cc))
             q.append((rr, cc))
     return False
+
+
+def generate_canonical_cliff(rows: int, cols: int) -> np.ndarray:
+    """
+    Classic Cliff Walking layout: the entire bottom row is cliff, except the
+    start (bottom-left) and goal (bottom-right) corners.
+
+        . . . . . . .
+        . . . . . . .
+        S C C C C C G
+
+    This is the layout that makes Q-learning (off-policy) hug the cliff edge
+    on the row just above it, while SARSA (on-policy) backs off to a safer
+    higher row -- the textbook safe-vs-risky path contrast.
+    """
+    cliff = np.zeros((rows, cols), dtype=bool)
+    start = (rows - 1, 0)
+    goal = (rows - 1, cols - 1)
+    cliff[rows - 1, :] = True
+    cliff[start] = False
+    cliff[goal] = False
+    return cliff
 
 
 def generate_random_cliffs_with_path(
@@ -113,12 +141,14 @@ class RandomCliffWalkingEnv(gym.Env):
         map_seed: int = MAP_SEED,
         n_cliffs: int = N_CLIFFS,
         max_steps: int = MAX_STEPS,
+        layout: str = LAYOUT,
     ):
         super().__init__()
         self.rows = ROWS
         self.cols = COLS
         self.render_mode = render_mode
         self.max_steps = max_steps
+        self.layout = layout
 
         self.observation_space = spaces.Discrete(self.rows * self.cols)
         self.action_space = spaces.Discrete(4)
@@ -127,13 +157,18 @@ class RandomCliffWalkingEnv(gym.Env):
         self.goal = (self.rows - 1, self.cols - 1)
 
         # cliffs fixed at env creation (same map all episode resets)
-        self.cliff = generate_random_cliffs_with_path(
-            rows=self.rows,
-            cols=self.cols,
-            n_cliffs=n_cliffs,
-            seed=map_seed,
-            max_tries=MAX_TRIES,
-        )
+        if layout == "canonical":
+            self.cliff = generate_canonical_cliff(rows=self.rows, cols=self.cols)
+        elif layout == "random":
+            self.cliff = generate_random_cliffs_with_path(
+                rows=self.rows,
+                cols=self.cols,
+                n_cliffs=n_cliffs,
+                seed=map_seed,
+                max_tries=MAX_TRIES,
+            )
+        else:
+            raise ValueError(f"Unknown layout {layout!r}; use 'canonical' or 'random'.")
 
         self._agent_rc = self.start
         self._steps = 0
@@ -149,7 +184,11 @@ class RandomCliffWalkingEnv(gym.Env):
         super().reset(seed=seed)
         self._agent_rc = self.start
         self._steps = 0
-        if self.render_mode in {"human", "rgb_array"}:
+        # Only render here for live "human" windows. For "rgb_array" the
+        # RecordVideo wrapper calls render() itself, and only on the episodes
+        # it actually records -- rendering every step here would render the
+        # whole run (2x, redundantly with the wrapper) and make training crawl.
+        if self.render_mode == "human":
             self.render()
         return _idx(*self._agent_rc, cols=self.cols), {}
 
@@ -166,17 +205,24 @@ class RandomCliffWalkingEnv(gym.Env):
         reward = -1.0
 
         if self.cliff[r2, c2]:
+            # Canonical Cliff Walking: falling in costs -100 and teleports the
+            # agent back to Start, but the episode CONTINUES (cliff is NOT
+            # terminal). This is what lets Q-learning rack up repeated -100s
+            # while exploring the cliff edge, producing the classic worse
+            # online return vs. SARSA.
             reward = -100.0
-            terminated = True
+            self._agent_rc = self.start
         elif (r2, c2) == self.goal:
             terminated = True
         elif self._steps >= self.max_steps:
             truncated = True
 
-        if self.render_mode in {"human", "rgb_array"}:
+        if self.render_mode == "human":
             self.render()
 
-        return _idx(r2, c2, cols=self.cols), reward, terminated, truncated, {}
+        # Use the agent's actual position: after a cliff fall this is Start,
+        # not the cliff tile the agent stepped onto.
+        return _idx(*self._agent_rc, cols=self.cols), reward, terminated, truncated, {}
 
     def render(self):
         if self.render_mode == "ansi":
@@ -271,12 +317,14 @@ def make_cliff_env(
     map_seed: int = MAP_SEED,
     n_cliffs: int = N_CLIFFS,
     max_steps: int = MAX_STEPS,
+    layout: str = LAYOUT,
 ):
     return RandomCliffWalkingEnv(
         render_mode=render_mode,
         map_seed=map_seed,
         n_cliffs=n_cliffs,
         max_steps=max_steps,
+        layout=layout,
     )
 
 def seed_everything(env, seed: int):

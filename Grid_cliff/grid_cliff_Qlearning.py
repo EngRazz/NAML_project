@@ -305,7 +305,7 @@ if __name__ == "__main__":
         alpha=0.1,
         gamma=0.99,
         eps_start=1.0,
-        eps_end=0.000,
+        eps_end=0.1,
         eps_decay_steps=8000,
         seed=0,
         log_every=500,
