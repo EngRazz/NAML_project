@@ -1,4 +1,5 @@
-# grid_cliff_Qlearning.py
+# grid_cliff_algorithms.py
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 import time
@@ -72,7 +73,12 @@ def train_q_learning(
             s2, r, terminated, truncated, _ = env.step(a)
             done = terminated or truncated
 
-            td_target = r + (0.0 if done else gamma * float(np.max(Q[s2])))
+            # Bootstrap on `terminated` only. A truncation (max_steps hit) is NOT
+            # a real terminal state -- the MDP continues, the agent just ran out
+            # of time -- so we must keep the gamma*max(Q[s2]) bootstrap there.
+            # Using `done` would wrongly zero it and teach that timed-out states
+            # have no future value.
+            td_target = r + (0.0 if terminated else gamma * float(np.max(Q[s2])))
             Q[s, a] += alpha * (td_target - Q[s, a])
 
             s = s2
@@ -89,6 +95,102 @@ def train_q_learning(
             ll = lengths[ep + 1 - log_every : ep + 1]
             print(
                 f"Episode {ep+1:5d}/{episodes} | eps={eps:.3f} | "
+                f"avg_return={rr.mean():7.2f} | avg_len={ll.mean():6.2f} | "
+                f"success_rate={ss.mean()*100:5.1f}% | "
+                f"best={rr.max():6.0f} worst={rr.min():6.0f}"
+            )
+
+    env.close()
+    return Q, returns, lengths, success, epsilons
+
+
+def train_sarsa(
+    episodes=10000,
+    alpha=0.1,
+    gamma=0.99,
+    eps_start=1.0,
+    eps_end=0.00,
+    eps_decay_steps=8000,
+    seed=0,
+    log_every=500,
+    env=None,
+):
+    """
+    SARSA (on-policy TD control).
+
+    Identical to train_q_learning EXCEPT the TD target:
+        Q-learning (off-policy): target = r + gamma * max_a' Q[s2, a']
+        SARSA      (on-policy):  target = r + gamma *        Q[s2, a2]
+    where a2 is the action ACTUALLY taken next by the epsilon-greedy policy.
+
+    Because the target needs a2, the loop chooses the next action *before*
+    updating and carries the (state, action) pair across steps -- the classic
+    (S, A, R, S', A') update that gives SARSA its name. On the cliff this makes
+    SARSA value cliff-adjacent cells lower (an exploratory step there risks the
+    -100), so it learns a safer path further from the edge than Q-learning.
+    """
+    if env is None:
+        env = make_cliff_env(render_mode=None)
+    rng = np.random.default_rng(seed)
+    env.action_space.seed(seed)
+
+    n_states = env.observation_space.n
+    n_actions = env.action_space.n
+    goal_state = env.unwrapped.goal[0] * env.unwrapped.cols + env.unwrapped.goal[1]
+
+    Q = np.zeros((n_states, n_actions), dtype=np.float32)
+
+    returns = np.zeros(episodes, dtype=np.float32)
+    lengths = np.zeros(episodes, dtype=np.int32)
+    success = np.zeros(episodes, dtype=np.int32)
+    epsilons = np.zeros(episodes, dtype=np.float32)
+
+    def eps_schedule(ep: int) -> float:
+        t = min(ep, eps_decay_steps)
+        return float(eps_start + (eps_end - eps_start) * (t / float(eps_decay_steps)))
+
+    for ep in range(episodes):
+        s, _ = env.reset(seed=seed + ep)
+        done = False
+        ep_return = 0.0
+        ep_len = 0
+
+        eps = eps_schedule(ep)
+        epsilons[ep] = eps
+
+        terminated = False
+        truncated = False
+
+        # ON-POLICY: pick the first action before entering the loop.
+        a = epsilon_greedy(Q, s, eps, n_actions, rng)
+
+        while not done:
+            s2, r, terminated, truncated, _ = env.step(a)
+            done = terminated or truncated
+
+            # Choose the next action with the SAME epsilon-greedy policy. This
+            # a2 is what SARSA bootstraps from (not the greedy max).
+            a2 = epsilon_greedy(Q, s2, eps, n_actions, rng)
+
+            # Bootstrap on `terminated` only (truncation is not a real terminal).
+            td_target = r + (0.0 if terminated else gamma * float(Q[s2, a2]))
+            Q[s, a] += alpha * (td_target - Q[s, a])
+
+            # Carry BOTH state and action forward.
+            s, a = s2, a2
+            ep_return += float(r)
+            ep_len += 1
+
+        returns[ep] = ep_return
+        lengths[ep] = ep_len
+        success[ep] = 1 if (terminated and (s == goal_state)) else 0
+
+        if log_every and (ep + 1) % log_every == 0:
+            rr = returns[ep + 1 - log_every : ep + 1]
+            ss = success[ep + 1 - log_every : ep + 1]
+            ll = lengths[ep + 1 - log_every : ep + 1]
+            print(
+                f"[SARSA] Episode {ep+1:5d}/{episodes} | eps={eps:.3f} | "
                 f"avg_return={rr.mean():7.2f} | avg_len={ll.mean():6.2f} | "
                 f"success_rate={ss.mean()*100:5.1f}% | "
                 f"best={rr.max():6.0f} worst={rr.min():6.0f}"
@@ -156,8 +258,9 @@ def train_q_learning_recorded(
     eps_decay_steps=8000,
     seed=0,
     log_every=500,
-    video_folder="videos/cliff_training",
+    video_folder="videos/cliff_training/qlearning",
     record_every=500,
+    name_prefix="qlearning_video",
 ):
     register_cliff_env()
     base_env = gym.make(ENV_ID, render_mode="rgb_array")
@@ -165,12 +268,53 @@ def train_q_learning_recorded(
         base_env,
         video_folder=video_folder,
         episode_trigger=lambda ep: (ep + 1) % record_every == 0,
+        name_prefix=name_prefix,
         disable_logger=True,
     )
     train_env = RecordEpisodeStatistics(train_env)
 
     try:
         return train_q_learning(
+            episodes=episodes,
+            alpha=alpha,
+            gamma=gamma,
+            eps_start=eps_start,
+            eps_end=eps_end,
+            eps_decay_steps=eps_decay_steps,
+            seed=seed,
+            log_every=log_every,
+            env=train_env,
+        )
+    finally:
+        train_env.close()
+
+
+def train_sarsa_recorded(
+    episodes=10000,
+    alpha=0.1,
+    gamma=0.99,
+    eps_start=1.0,
+    eps_end=0.0,
+    eps_decay_steps=8000,
+    seed=0,
+    log_every=500,
+    video_folder="videos/cliff_training/sarsa",
+    record_every=500,
+    name_prefix="sarsa_video",
+):
+    register_cliff_env()
+    base_env = gym.make(ENV_ID, render_mode="rgb_array")
+    train_env = RecordVideo(
+        base_env,
+        video_folder=video_folder,
+        episode_trigger=lambda ep: (ep + 1) % record_every == 0,
+        name_prefix=name_prefix,
+        disable_logger=True,
+    )
+    train_env = RecordEpisodeStatistics(train_env)
+
+    try:
+        return train_sarsa(
             episodes=episodes,
             alpha=alpha,
             gamma=gamma,
@@ -295,6 +439,64 @@ def plot_curves(returns, lengths, success, epsilons, smooth_window=200):
     plt.ylabel("Epsilon")
     plt.grid(True)
 
+    plt.show()
+
+
+def plot_comparison(
+    q_stats,
+    sarsa_stats,
+    smooth_window=200,
+    labels=("Q-learning", "SARSA"),
+    save_path=None,
+):
+    """
+    Overlay Q-learning vs SARSA training curves on shared axes.
+
+    Each *_stats is the (returns, lengths, success, epsilons) tuple returned by
+    the trainers. Produces one figure with three panels (return, success rate,
+    episode length), each plotting both algorithms so the on-policy vs
+    off-policy contrast is directly visible -- SARSA's safer path gives it a
+    higher online return, while both reach a similar success rate.
+    """
+    q_ret, q_len, q_suc, _ = q_stats
+    s_ret, s_len, s_suc, _ = sarsa_stats
+
+    def smooth(values):
+        sm = rolling_mean(np.asarray(values, dtype=np.float32), smooth_window)
+        x = np.arange(len(sm)) + (smooth_window - 1)
+        return x, sm
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig.suptitle(
+        f"Cliff Walking: {labels[0]} vs {labels[1]} (rolling mean, w={smooth_window})",
+        fontsize=14, fontweight="bold",
+    )
+
+    panels = [
+        (axes[0], "Episode Return", q_ret, s_ret, None),
+        (axes[1], "Success Rate",   q_suc.astype(np.float32), s_suc.astype(np.float32), (0.0, 1.0)),
+        (axes[2], "Episode Length", q_len.astype(np.float32), s_len.astype(np.float32), None),
+    ]
+
+    for ax, title, q_vals, s_vals, ylim in panels:
+        xq, yq = smooth(q_vals)
+        xs, ys = smooth(s_vals)
+        ax.plot(xq, yq, color="tab:blue",   linewidth=2, label=labels[0])
+        ax.plot(xs, ys, color="tab:orange", linewidth=2, label=labels[1])
+        ax.set_title(title)
+        ax.set_xlabel("Episode")
+        if ylim is not None:
+            ax.set_ylim(*ylim)
+        ax.grid(alpha=0.3)
+        ax.legend()
+
+    plt.tight_layout()
+    if save_path is not None:
+        parent = os.path.dirname(save_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        fig.savefig(save_path, dpi=150)
+        print(f"Comparison plot saved to {save_path}")
     plt.show()
 
 
