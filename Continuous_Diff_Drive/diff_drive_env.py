@@ -37,7 +37,7 @@ class DiffDriveEnv(gym.Env):
     GOAL_REWARD = 500.0
     COLLISION_REWARD = -200.0
     TIMEOUT_REWARD = -150.0
-    SAFE_DISTANCE = 1.2
+    SAFE_DISTANCE = 0.5
     FRONT_SAFE_DISTANCE = 1.0
     GOAL_BLOCK_DISTANCE = 2.0
     GOAL_PROGRESS_WEIGHT = 8.0
@@ -438,10 +438,6 @@ class DiffDriveEnv(gym.Env):
         elif goal_reached:
             reward = self.GOAL_REWARD
             terminated = True
-            
-        #elif self.current_step == self.max_step: #reached timeout
-        #    reward = self.TIMEOUT_REWARD
-        #    terminated = False
 
         else:
             # Alternative SAC reward experiment (reference only, from old standalone SAC env):

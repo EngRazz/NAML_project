@@ -169,7 +169,13 @@ class DiffDriveDDPGAgent:
         self._soft_update(self.actor,  self.actor_target)
         self._soft_update(self.critic, self.critic_target)
 
-        return float(critic_loss.detach().cpu()), float(actor_loss.detach().cpu())
+        info = {
+            "critic_loss": float(critic_loss.detach().cpu()),
+            "actor_loss": float(actor_loss.detach().cpu()),
+        }
+        self.training_info.append(info)
+
+        return info["critic_loss"], info["actor_loss"]
 
     def _soft_update(self, online: torch.nn.Module, target: torch.nn.Module):
         """θ_target ← τ * θ_online + (1 - τ) * θ_target"""
@@ -210,8 +216,9 @@ class DiffDriveDDPGAgent:
         episode_lengths = []
         critic_losses   = []
         actor_losses    = []
-        ep_goal_dist = []
-        success_rate = []
+        episode_goal_distances = []
+        episode_successes = []
+        info = {}
 
         for ep in tqdm(range(num_episodes), desc="Training"):
             obs, _     = env.reset()
@@ -223,10 +230,8 @@ class DiffDriveDDPGAgent:
 
             while not done:
                 action = self.select_action(obs, add_noise)
-                next_obs, reward, terminated, truncated, _ = env.step(action)
+                next_obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
-                success_rate.append(done)
-                ep_goal_dist.append(next_obs[-2])
                 self.buffer.add(obs, action, reward, next_obs, done)
                 obs = next_obs
                 ep_reward     += reward
@@ -240,29 +245,42 @@ class DiffDriveDDPGAgent:
 
             episode_rewards.append(ep_reward)
             episode_lengths.append(list(env.length_queue)[-1])
+            episode_successes.append(1 if info.get("goal_reached", False) else 0)
+            episode_goal_distances.append(float(info.get("dist_to_goal", np.nan)))
+
             if ep_c_loss:
                 critic_losses.append(np.mean(ep_c_loss))
                 actor_losses.append(np.mean(ep_a_loss))
 
             if (ep + 1) % log_every == 0:
-                avg_r = np.mean(episode_rewards[-log_every:])
-                print(f"  Episode {ep+1:>5} | "
-                      f"avg reward (last {log_every}): {avg_r:.2f} | "
-                      f"buffer: {len(self.buffer):>6} | "
-                      f"steps: {self.total_steps}")
+                avg_reward = np.mean(episode_rewards[-log_every:])
+                avg_success = np.mean(episode_successes[-log_every:])
+                avg_goal_dist = np.mean(episode_goal_distances[-log_every:])
+                avg_actor_loss = np.mean(actor_losses[-log_every:]) if actor_losses else 0.0
+                avg_critic_loss = np.mean(critic_losses[-log_every:]) if critic_losses else 0.0
+                print(
+                    f"Episode {ep+1:>5} | "
+                    f"avg reward (last {log_every}): {avg_reward:.2f} | "
+                    f"avg success (last {log_every}): {avg_success:.2f} | "
+                    f"avg goal dist (last {log_every}): {avg_goal_dist:.2f} | "
+                    f"avg actor loss (last {log_every}): {avg_actor_loss:.4f} | "
+                    f"avg critic loss (last {log_every}): {avg_critic_loss:.4f}"
+                    f"buffer: {len(self.buffer):>6} | "
+                    f"total steps: {self.total_steps}"
+                )
 
-        # Save final model
-        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save({
-            "actor" : self.actor.state_dict(),
-            "critic": self.critic.state_dict(),
-            "actor_target" : self.actor_target.state_dict(),
-            "critic_target": self.critic_target.state_dict()
-        }, checkpoint_path)
-        print(f"Checkpoint saved to {checkpoint_path}")
-
+        self.save_checkpoint(checkpoint_path)
         env.close()
-        self._plot(episode_rewards, episode_lengths, critic_losses, actor_losses, success_rate, ep_goal_dist, plot_path=plot_path, plot_path2=plot_path2)
+        self.plot(
+            episode_rewards,
+            episode_lengths,
+            critic_losses,
+            actor_losses,
+            episode_successes,
+            episode_goal_distances,
+            plot_path=plot_path,
+            plot_path2=plot_path2
+        )
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -291,6 +309,7 @@ class DiffDriveDDPGAgent:
             obs, _ = env.reset()
             self.ou_noise.reset()
             done   = False
+            info   = {}
 
             while not done:
                 action = self.select_action(obs, add_noise)
