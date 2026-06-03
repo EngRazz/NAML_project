@@ -96,6 +96,33 @@ class GridFlagAgent:
 
         # Track learning progress (useful for debugging)
         self.training_error.append(temporal_difference)
+    
+    def update_SARSA(
+        self,
+        obs: tuple,
+        action: int,
+        reward: float,
+        terminated: bool,
+        next_obs: tuple,
+    ):
+        """"
+        Update Q-table based on SARSA update
+        
+        """ 
+        next_action = self.get_action(next_obs)
+        future_q_value = (not terminated) *  self.q_values[next_obs][next_action] 
+        #MAIN difference with Q-learning is that the future Q_value is chosed following the polic
+        target = reward + self.discount_factor * future_q_value
+        temporal_difference = target - self.q_values[obs][action]
+        
+        # Update our estimate in the direction of the error
+        self.q_values[obs][action] = (
+            self.q_values[obs][action] + self.lr * temporal_difference
+        )
+        
+        # Track learning progress (useful for debugging)
+        self.training_error.append(temporal_difference)
+
 
     def decay_epsilon(self):
         """
@@ -103,6 +130,7 @@ class GridFlagAgent:
         """
         self.epsilon = max(self.final_epsilon, self.epsilon - self.epsilon_decay)
 
+    #@ DEPRECATED? Train and train_sarsa aren't referenced anywhere 
     def train(self, num_episodes: int):
         """
         Train the agent for a given number of episodes.
@@ -121,6 +149,29 @@ class GridFlagAgent:
                 next_obs, reward, terminated, truncated, _ = self.env.step(action)
 
                 self.update(obs_to_key(next_obs), action, reward, terminated or truncated, next_obs)
+                obs = next_obs
+
+            self.decay_epsilon()
+    
+    def train_SARSA(self, num_episodes: int):
+        """"
+        Train the agent for a given number of episodes usinf the SARSA algorithm
+        
+        """
+        for _ in tqdm(range(num_episodes), desc="Training"):
+            obs_dict, _ = self.env.reset()
+            obs = obs_to_key(obs_dict)  # Convert dict obs to hashable key
+
+            terminated = False
+            truncated = False
+
+            # BUG FIX: also check truncated — the env signals episode end via
+            # truncated (time limit), not terminated (which is always False here).
+            while not terminated and not truncated:
+                action = self.get_action(obs)
+                next_obs, reward, terminated, truncated, _ = self.env.step(action)
+
+                self.update_SARSA(obs_to_key(next_obs), action, reward, terminated or truncated, next_obs)
                 obs = next_obs
 
             self.decay_epsilon()
@@ -209,6 +260,92 @@ class GridFlagAgent:
         plt.tight_layout()
         plt.savefig("./images/GridFlag_training_curves.png", dpi=150)
         print("Plot saved to GridFlag_training_curves.png")
+        
+    def train_recorded_SARSA(self, num_episodes, video_folder="videos/training",
+                    record_every=500, log_every=500):
+        env = RecordVideo(
+            self.env,
+            video_folder=video_folder,
+            name_prefix="GridFlagTrain",
+            episode_trigger=lambda ep: ep % record_every == 0,
+        )
+        env = RecordEpisodeStatistics(env, buffer_length=num_episodes)
+
+        # Store stats for plotting
+        episode_rewards = []
+        episode_lengths = []
+        epsilons        = []
+
+        for ep in tqdm(range(num_episodes), desc="Training"):
+            obs_dict, _ = env.reset()
+            obs = obs_to_key(obs_dict)
+            terminated = False
+            truncated  = False
+            episode_reward = 0
+
+            while not terminated and not truncated:
+                action = self.get_action(obs)
+                next_obs_dict, reward, terminated, truncated, _ = env.step(action)
+                next_obs = obs_to_key(next_obs_dict)
+                self.update_SARSA(obs, action, reward, terminated or truncated, next_obs)
+                obs = next_obs
+                
+                # Record stats
+                episode_reward += reward
+
+            self.decay_epsilon()
+
+            # Record stats
+            episode_rewards.append(episode_reward)
+            episode_lengths.append(list(env.length_queue)[-1])
+            epsilons.append(self.epsilon)
+
+            if (ep + 1) % log_every == 0:
+                recent = episode_rewards[-100:]
+                avg = np.mean(recent)
+                print(f"  Episode {ep + 1:>5} | "
+                    f"avg reward (last 100): {avg:.2f} | "
+                    f"epsilon: {self.epsilon:.3f}")
+
+        env.close()
+
+        rewards  = np.array(episode_rewards)
+        lengths  = np.array(episode_lengths)
+        episodes = np.arange(1, len(rewards) + 1)
+
+        fig, axes = plt.subplots(2, 1, figsize=(16, 8))
+        fig.suptitle("Training Curves SARSA", fontsize=14, fontweight="bold")
+
+        axes[0].plot(episodes, rewards, color="steelblue", alpha=0.6, marker="o", markersize=3, label="Episode reward")
+        axes[0].axhline(len(self.env.unwrapped.flag_cells) * self.env.unwrapped.flag_value, color="gold",
+                        linestyle="--", linewidth=1, label="Max reward")
+        
+        ar_rewards = list()
+        for i in range(100, len(rewards)):
+            ar_rewards.append(np.mean(rewards[i-100:i]))
+        axes[0].plot(episodes[100:], ar_rewards, color="orange", alpha=0.9, marker="o", markersize=3, label="Mean(100) reward")
+        
+        axes[0].set_ylabel("Reward")
+        axes[0].legend(fontsize=8)
+        axes[0].grid(alpha=0.3)
+
+        axes[1].plot(episodes, lengths, color="coral", alpha=0.8, marker="o", markersize=3, label="Episode steps")
+        axes[1].axhline(min(lengths), color="purple", linestyle="--", linewidth=1, label="Min steps")
+        axes[1].axhline(lengths[-1], color="green" if min(lengths) == lengths[-1] else "red", linestyle="--", linewidth=1, label="Last steps")
+
+        ar_lengths = list()
+        for i in range(100, len(lengths)):
+            ar_lengths.append(np.mean(lengths[i-100:i]))
+        axes[1].plot(episodes[100:], ar_lengths, color="purple", alpha=0.9, marker="o", markersize=3, label="Mean(100) steps")
+
+        axes[1].set_ylabel("Steps")
+        axes[1].legend(fontsize=8)
+        axes[1].grid(alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig("./images/GridFlag_training_curves_SARSA.png", dpi=150)
+        print("Plot saved to GridFlag_training_curves_SARSA.png")
+
 
     def eval_recorded(
         self,

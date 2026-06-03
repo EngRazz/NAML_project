@@ -69,3 +69,30 @@ agent.eval_recorded(
     video_folder="videos/evaluation",
     name_prefix="eval",
 )
+
+
+# --- SARSA AGENT TRAINING AND EVALUATION -----------------------
+
+agent_sarsa = GridFlagAgent(
+    env=train_env,
+    learning_rate=LEARNING_RATE,
+    initial_epsilon=INITIAL_EPSILON,
+    epsilon_decay=EPSILON_DECAY,
+    final_epsilon=FINAL_EPSILON,
+    discount_factor=DISCOUNT_FACTOR,
+)
+
+agent_sarsa.train_recorded_SARSA(
+    num_episodes=NUM_EPISODES,
+    video_folder="videos/training",
+    record_every=RECORD_EVERY,
+    log_every=500,
+)
+
+# ── Evaluation ────────────────────────────────────────────────────────────────
+
+# Set epsilon to 0 so the agent acts greedily (pure exploitation, no exploration)
+agent_sarsa.eval_recorded(
+    video_folder="videos/evaluation_SARSA",
+    name_prefix="eval",
+)
