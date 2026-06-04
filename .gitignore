@@ -40,4 +40,3 @@ dmypy.json
 .pyre/
 videos/
 images/
-*.pt

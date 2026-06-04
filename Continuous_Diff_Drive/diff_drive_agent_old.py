@@ -28,35 +28,6 @@ def _artifact_path(path):
     return path if path.is_absolute() else BASE_DIR / path
 
 
-def _obs_max_distance(env):
-    return float(np.sqrt(env.room_w ** 2 + env.room_h ** 2))
-
-
-def _normalize_obs(obs, env):
-    obs = np.asarray(obs, dtype=np.float32)
-    n_lidar = int(env.n_lidar_rays)
-    out = obs.copy()
-    out[:n_lidar] /= max(float(env.lidar_max_range), 1e-8)
-    out[n_lidar:n_lidar + 1] /= max(_obs_max_distance(env), 1e-8)
-    out[n_lidar + 1:n_lidar + 2] /= np.pi
-    return out.astype(np.float32)
-
-
-def _normalize_obs_batch(obs, env):
-    obs = np.asarray(obs, dtype=np.float32)
-    n_lidar = int(env.n_lidar_rays)
-    out = obs.copy()
-    out[:, :n_lidar] /= max(float(env.lidar_max_range), 1e-8)
-    out[:, n_lidar:n_lidar + 1] /= max(_obs_max_distance(env), 1e-8)
-    out[:, n_lidar + 1:n_lidar + 2] /= np.pi
-    return out.astype(np.float32)
-
-
-def _clip_grad_norm(module, max_norm):
-    if max_norm is not None and max_norm > 0:
-        torch.nn.utils.clip_grad_norm_(module.parameters(), max_norm)
-
-
 class DiffDriveDDPGAgent:
     """
     DDPG (Deep Deterministic Policy Gradient) agent for the DiffDriveEnv.
@@ -80,16 +51,14 @@ class DiffDriveDDPGAgent:
         env: DiffDriveEnv,
         actor_lr:     float = 1e-4,
         critic_lr:    float = 1e-3,
-        discount:     float = 0.99,
-        tau:          float = 0.005, # Soft update rate for target networks
-        noise_std:    float = 0.2,
-        noise_clip:   float = 0.5,
+        discount:     float = 0.99,       # gamma
+        tau:          float = 0.005,      # soft update rate for target networks
+        noise_std:    float = 0.2,        # std of Ornstein-Uhlenbeck exploration noise
+        noise_clip:   float = 0.5,        # max absolute value of noise
         batch_size:   int   = 256,
-        buffer_size:  int   = 300_000,
+        buffer_size:  int   = 100_000,
         hidden_dim:   int   = 256,
-        warmup_steps: int   = 5_000,
-        updates_per_step: int = 1,
-        max_grad_norm: float = 1.0,
+        warmup_steps: int   = 1_000,      # random actions before training starts --> to fill the buffer
         device:       str   = "cpu",
     ):
         self.env        = env
@@ -98,8 +67,6 @@ class DiffDriveDDPGAgent:
         self.noise_clip = noise_clip
         self.batch_size = batch_size
         self.warmup_steps = warmup_steps
-        self.updates_per_step = updates_per_step
-        self.max_grad_norm = max_grad_norm
         self.device     = torch.device(device)
 
         obs_dim    = env.observation_space.shape[0]
@@ -109,24 +76,30 @@ class DiffDriveDDPGAgent:
 
         self.ou_noise = OUNoise(action_dim, sigma=noise_std)
 
+        # ── Networks ──────────────────────────────────────────────────
         self.actor  = Actor(obs_dim, action_dim, action_low, action_high, hidden_dim).to(self.device)
         self.critic = Critic(obs_dim, action_dim, hidden_dim).to(self.device)
 
+        # Initialise online networks before target networks copy them.
         self.actor.apply(init_weights)
         self.critic.apply(init_weights)
 
+        # Target networks start as exact copies
         self.actor_target  = Actor(obs_dim, action_dim, action_low, action_high, hidden_dim).to(self.device)
         self.critic_target = Critic(obs_dim, action_dim, hidden_dim).to(self.device)
-        self.actor_target.load_state_dict(self.actor.state_dict())
+        self.actor_target.load_state_dict(self.actor.state_dict()) #che fa?
         self.critic_target.load_state_dict(self.critic.state_dict())
 
+        # ── Optimisers ────────────────────────────────────────────────
         self.actor_optim  = torch.optim.Adam(self.actor.parameters(),  lr=actor_lr)
         self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
 
+        # ── Replay buffer ─────────────────────────────────────────────
         self.buffer = ReplayBuffer(obs_dim, action_dim, buffer_size)
 
+        # ── Bookkeeping ───────────────────────────────────────────────
         self.total_steps   = 0
-        self.training_info = []
+        self.training_info = []   # list of dicts with per-update losses
 
     # ------------------------------------------------------------------
     # Action selection
@@ -140,10 +113,11 @@ class DiffDriveDDPGAgent:
         exploration. At evaluation time, set add_noise=False for pure exploitation.
         """
         if add_noise and self.total_steps < self.warmup_steps:
-            return self.env.action_space.sample().astype(np.float32)
+            # Warm-up: purely random actions to fill the replay buffer
+            return self.env.action_space.sample()
 
-        obs_t = torch.as_tensor(_normalize_obs(obs, self.env), dtype=torch.float32, device=self.device).unsqueeze(0)
-        action = self.actor(obs_t).detach().cpu().numpy()[0]
+        obs_t  = torch.FloatTensor(obs).unsqueeze(0).to(self.device) #transform the obs in tensor, with unsqueeze change the dimension in (1,obs.shape[0]) since tf use this format and move data to the device with the network
+        action = self.actor(obs_t).detach().cpu().numpy()[0] #get answer from network, detach to avoid backprog, cpu to move data in cpu (maybe where moved in other device)and numpy to convert in np.array. [0] to invert unsqueeze 
 
         if add_noise:
             noise  = np.clip(self.ou_noise.sample(), -self.noise_clip, self.noise_clip)
@@ -159,30 +133,36 @@ class DiffDriveDDPGAgent:
         """Sample a batch from the buffer and update both networks."""
         batch = self.buffer.sample(self.batch_size)
 
-        states      = torch.as_tensor(_normalize_obs_batch(batch["states"], self.env), dtype=torch.float32, device=self.device)
-        actions     = torch.as_tensor(batch["actions"], dtype=torch.float32, device=self.device)
-        rewards     = torch.as_tensor(batch["rewards"], dtype=torch.float32, device=self.device)
-        next_states = torch.as_tensor(_normalize_obs_batch(batch["next_states"], self.env), dtype=torch.float32, device=self.device)
-        dones       = torch.as_tensor(batch["dones"], dtype=torch.float32, device=self.device)
+        # Prepare the data of the batch to be used by the tensors
+        states      = torch.FloatTensor(batch["states"]).to(self.device)
+        actions     = torch.FloatTensor(batch["actions"]).to(self.device)
+        rewards     = torch.FloatTensor(batch["rewards"]).to(self.device)
+        next_states = torch.FloatTensor(batch["next_states"]).to(self.device)
+        dones       = torch.FloatTensor(batch["dones"]).to(self.device)
 
+        # -- Compute Bellman target from the Critic Target and Actor Target networks -----------
         with torch.no_grad():
+            # Target actor selects the next action
             next_actions = self.actor_target(next_states)
+            # Target critic estimates its value
             target_q = self.critic_target(next_states, next_actions)
+            # Bellman target: r + γ * Q_target(s', a')  (zero if episode ended)
             target_q = rewards + self.discount * (1.0 - dones) * target_q
 
-        current_q   = self.critic(states, actions)
-        critic_loss = F.mse_loss(current_q, target_q)
+        # ── Critic update ─────────────────────────────────────────────
+        current_q   = self.critic(states, actions) #predict of current critic
+        critic_loss = F.mse_loss(current_q, target_q) #loss of current critic wrt target value
 
-        self.critic_optim.zero_grad()
-        critic_loss.backward()
-        _clip_grad_norm(self.critic, self.max_grad_norm)
-        self.critic_optim.step()
+        self.critic_optim.zero_grad() #clean-up the old gradients
+        critic_loss.backward() #compute new gradient
+        self.critic_optim.step() #compute new weigths
 
+        # ── Actor update ──────────────────────────────────────────────
+        # Maximise Q(s, actor(s))  ≡  minimise -Q(s, actor(s))
         actor_loss = -self.critic(states, self.actor(states)).mean()
 
         self.actor_optim.zero_grad()
         actor_loss.backward()
-        _clip_grad_norm(self.actor, self.max_grad_norm)
         self.actor_optim.step()
 
         # ── Soft update of target networks ────────────────────────────
@@ -198,43 +178,9 @@ class DiffDriveDDPGAgent:
         return info["critic_loss"], info["actor_loss"]
 
     def _soft_update(self, online: torch.nn.Module, target: torch.nn.Module):
-        """theta_target <- tau * theta_online + (1 - tau) * theta_target"""
+        """θ_target ← τ * θ_online + (1 - τ) * θ_target"""
         for online_p, target_p in zip(online.parameters(), target.parameters()):
             target_p.data.copy_(self.tau * online_p.data + (1.0 - self.tau) * target_p.data)
-
-    def save_checkpoint(self, checkpoint_path=DEFAULT_CHECKPOINT_PATH):
-        checkpoint_path = _artifact_path(checkpoint_path)
-        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        checkpoint = {
-            "actor": self.actor.state_dict(),
-            "actor_target": self.actor_target.state_dict(),
-            "critic": self.critic.state_dict(),
-            "critic_target": self.critic_target.state_dict(),
-            "actor_optim": self.actor_optim.state_dict(),
-            "critic_optim": self.critic_optim.state_dict(),
-            "total_steps": self.total_steps,
-        }
-        torch.save(checkpoint, checkpoint_path)
-        print(f"DDPG checkpoint saved to {checkpoint_path}")
-
-    def load_checkpoint(self, checkpoint_path=DEFAULT_CHECKPOINT_PATH, load_optimizers: bool = True):
-        checkpoint_path = _artifact_path(checkpoint_path)
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
-
-        self.actor.load_state_dict(checkpoint["actor"])
-        self.actor_target.load_state_dict(checkpoint["actor_target"])
-        self.critic.load_state_dict(checkpoint["critic"])
-        self.critic_target.load_state_dict(checkpoint["critic_target"])
-
-        if load_optimizers:
-            if "actor_optim" in checkpoint:
-                self.actor_optim.load_state_dict(checkpoint["actor_optim"])
-            if "critic_optim" in checkpoint:
-                self.critic_optim.load_state_dict(checkpoint["critic_optim"])
-
-        self.total_steps = int(checkpoint.get("total_steps", self.total_steps))
-        print(f"DDPG checkpoint loaded from {checkpoint_path}")
-        return checkpoint
 
     # ------------------------------------------------------------------
     # Training loop
@@ -286,17 +232,16 @@ class DiffDriveDDPGAgent:
                 action = self.select_action(obs, add_noise)
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
-                self.buffer.add(obs, action, reward, next_obs, terminated)
+                self.buffer.add(obs, action, reward, next_obs, done)
                 obs = next_obs
                 ep_reward     += reward
                 self.total_steps += 1
 
                 # Start learning only after warm-up and when buffer is ready
                 if self.buffer.ready(self.batch_size) and self.total_steps >= self.warmup_steps:
-                    for _ in range(self.updates_per_step):
-                        c_loss, a_loss = self._update()
-                        ep_c_loss.append(c_loss)
-                        ep_a_loss.append(a_loss)
+                    c_loss, a_loss = self._update()
+                    ep_c_loss.append(c_loss)
+                    ep_a_loss.append(a_loss)
 
             episode_rewards.append(ep_reward)
             episode_lengths.append(list(env.length_queue)[-1])
@@ -326,7 +271,7 @@ class DiffDriveDDPGAgent:
 
         self.save_checkpoint(checkpoint_path)
         env.close()
-        self._plot(
+        self.plot(
             episode_rewards,
             episode_lengths,
             critic_losses,
@@ -453,16 +398,11 @@ class DiffDriveDDPGAgent:
         plt.close(fig)
         print(f"Plot saved to {plot_path}")
         
-        fig2, axs2 = plt.subplots(1, 2, figsize=(16, 8))
+        fig2, axs2 = plt.subplots(1, 2, figsize=(16,8))
         axs2[0].plot(episodes, success_rate)
         axs2[0].set_title("Success rate")
-        axs2[0].set_ylim(-0.05, 1.05)
-        axs2[0].grid(alpha=0.3)
-
-        axs2[1].plot(episodes, ep_goal_dist)
-        axs2[1].set_title("Episode goal distance")
-        axs2[1].grid(alpha=0.3)
-
+        axs2[0].plot(episodes, ep_goal_dist)
+        axs2[0].set_title("Ep_goal_dist")
         plt.tight_layout()
         fig2.savefig(plot_path2, dpi=150)
         plt.close(fig2)
@@ -470,59 +410,58 @@ class DiffDriveDDPGAgent:
         
     
     def plot_critic_heatmap(self, resolution: int = 50, theta: float = 0.0):
-        x_range = np.linspace(0.0, self.env.room_w, resolution)
-        y_range = np.linspace(0.0, self.env.room_h, resolution)
+        """
+        Genera una heatmap del valore Q calcolato dal Critic per ogni (x, y).
+        Assume che le prime due dimensioni dell'observation siano x e y.
+        """
+        # 1. Definiamo i limiti della griglia in base all'ambiente
+        # (Adatta questi valori ai limiti reali del tuo DiffDriveEnv)
+        x_range = np.linspace(-5, 5, resolution) 
+        y_range = np.linspace(-5, 5, resolution)
         grid_x, grid_y = np.meshgrid(x_range, y_range)
-
-        q_values = np.full((resolution, resolution), np.nan, dtype=np.float32)
-
-        robot_pos = self.env.robot_pos.copy()
-        robot_theta = float(self.env.robot_theta)
-        prev_dist = float(self.env.prev_dist) if hasattr(self.env, "prev_dist") else None
-        prev_lidar = None if not hasattr(self.env, "_prev_lidar") else self.env._prev_lidar.copy()
-        last_lidar = None if not hasattr(self.env, "_last_lidar") else self.env._last_lidar.copy()
-        current_step = int(self.env.current_step) if hasattr(self.env, "current_step") else None
-
+        
+        q_values = np.zeros((resolution, resolution))
+        
         self.critic.eval()
         self.actor.eval()
-
+        
         with torch.no_grad():
             for i in range(resolution):
                 for j in range(resolution):
-                    self.env.robot_pos = np.array([grid_x[i, j], grid_y[i, j]], dtype=np.float32)
-                    self.env.robot_theta = float(theta)
-                    obs = self.env._get_obs()
-                    obs_t = torch.as_tensor(_normalize_obs(obs, self.env), dtype=torch.float32, device=self.device).unsqueeze(0)
+                    # Costruiamo un'osservazione fittizia
+                    # Esempio: [x, y, cos(theta), sin(theta), lidar_1, ..., lidar_n]
+                    # NOTA: Qui devi replicare l'esatta struttura del tuo vettore 'obs'
+                    obs = np.zeros(self.env.observation_space.shape[0])
+                    obs[0] = grid_x[i, j]
+                    obs[1] = grid_y[i, j]
+                    # Se l'orientamento è nelle obs (es. pos 2 e 3)
+                    if len(obs) > 3:
+                        obs[2] = np.cos(theta)
+                        obs[3] = np.sin(theta)
+                    
+                    obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
+                    
+                    # Chiediamo all'Actor cosa farebbe in quel punto
                     action_t = self.actor(obs_t)
+                    # Il Critic valuta l'azione dell'Actor
                     q_val = self.critic(obs_t, action_t)
-                    q_values[i, j] = float(q_val.cpu().item())
+                    
+                    q_values[i, j] = q_val.cpu().item()
 
-        self.env.robot_pos = robot_pos
-        self.env.robot_theta = robot_theta
-        if prev_dist is not None:
-            self.env.prev_dist = prev_dist
-        if prev_lidar is not None:
-            self.env._prev_lidar = prev_lidar
-        if last_lidar is not None:
-            self.env._last_lidar = last_lidar
-        if current_step is not None:
-            self.env.current_step = current_step
-
+        # 2. Plotting
         plt.figure(figsize=(8, 6))
-        im = plt.imshow(
-            q_values,
-            extent=[x_range[0], x_range[-1], y_range[0], y_range[-1]],
-            origin="lower",
-            cmap="viridis",
-        )
-        plt.colorbar(im, label="Q value")
+        im = plt.imshow(q_values, extent=[x_range[0], x_range[-1], y_range[0], y_range[-1]], 
+                        origin='lower', cmap='viridis')
+        plt.colorbar(im, label='Valore Q (Stima del premio futuro)')
         plt.title(f"Critic Heatmap (Orientation: {np.degrees(theta)}°)")
         plt.xlabel("X")
         plt.ylabel("Y")
         plt.show()
-
+        
         self.critic.train()
         self.actor.train()
+
+
 class DiffDriveSACAgent:
     """
     SAC (Soft Actor-Critic) agent for the shared DiffDriveEnv.
@@ -542,11 +481,9 @@ class DiffDriveSACAgent:
         tau: float = 0.005,
         alpha: float = 0.2,
         batch_size: int = 256,
-        buffer_size: int = 300_000,
+        buffer_size: int = 100_000,
         hidden_dim: int = 256,
-        warmup_steps: int = 5_000,
-        updates_per_step: int = 2,
-        max_grad_norm: float = 1.0,
+        warmup_steps: int = 1_000,
         device: str = "cpu",
         automatic_entropy_tuning: bool = True,
     ):
@@ -555,8 +492,6 @@ class DiffDriveSACAgent:
         self.tau = tau
         self.batch_size = batch_size
         self.warmup_steps = warmup_steps
-        self.updates_per_step = updates_per_step
-        self.max_grad_norm = max_grad_norm
         self.device = torch.device(device)
         self.automatic_entropy_tuning = automatic_entropy_tuning
 
@@ -613,7 +548,7 @@ class DiffDriveSACAgent:
         if self.total_steps < self.warmup_steps and not evaluate:
             return self.env.action_space.sample().astype(np.float32)
 
-        obs_t = torch.as_tensor(_normalize_obs(obs, self.env), dtype=torch.float32, device=self.device).unsqueeze(0)
+        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         with torch.no_grad():
             if evaluate:
                 action = self.actor.act(obs_t)
@@ -630,10 +565,10 @@ class DiffDriveSACAgent:
         """Sample a batch and update SAC critic, actor, alpha, and target critic."""
         batch = self.buffer.sample(self.batch_size)
 
-        states = torch.as_tensor(_normalize_obs_batch(batch["states"].cpu().numpy(), self.env), dtype=torch.float32, device=self.device)
+        states = batch["states"]
         actions = batch["actions"]
         rewards = batch["rewards"]
-        next_states = torch.as_tensor(_normalize_obs_batch(batch["next_states"].cpu().numpy(), self.env), dtype=torch.float32, device=self.device)
+        next_states = batch["next_states"]
         dones = batch["dones"]
 
         with torch.no_grad():
@@ -649,7 +584,6 @@ class DiffDriveSACAgent:
 
         self.critic_optim.zero_grad()
         critic_loss.backward()
-        _clip_grad_norm(self.critic, self.max_grad_norm)
         self.critic_optim.step()
 
         sampled_actions, log_probs = self.actor.sample(states)
@@ -659,7 +593,6 @@ class DiffDriveSACAgent:
 
         self.actor_optim.zero_grad()
         actor_loss.backward()
-        _clip_grad_norm(self.actor, self.max_grad_norm)
         self.actor_optim.step()
 
         if self.automatic_entropy_tuning:
@@ -797,18 +730,17 @@ class DiffDriveSACAgent:
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
 
-                self.buffer.add(obs, action, reward, next_obs, terminated)
+                self.buffer.add(obs, action, reward, next_obs, done)
                 obs = next_obs
                 ep_reward += reward
                 self.total_steps += 1
 
                 if self.buffer.ready(self.batch_size) and self.total_steps >= self.warmup_steps:
-                    for _ in range(self.updates_per_step):
-                        critic_loss, actor_loss, alpha_loss, alpha_value = self._update()
-                        ep_c_loss.append(critic_loss)
-                        ep_a_loss.append(actor_loss)
-                        ep_alpha_loss.append(alpha_loss)
-                        ep_alpha_values.append(alpha_value)
+                    critic_loss, actor_loss, alpha_loss, alpha_value = self._update()
+                    ep_c_loss.append(critic_loss)
+                    ep_a_loss.append(actor_loss)
+                    ep_alpha_loss.append(alpha_loss)
+                    ep_alpha_values.append(alpha_value)
 
             episode_rewards.append(ep_reward)
             episode_lengths.append(list(env.length_queue)[-1])
@@ -1016,18 +948,16 @@ class DiffDriveTD3Agent:
         env: DiffDriveEnv,
         actor_lr:          float = 1e-4,
         critic_lr:         float = 1e-3,
-        discount:          float = 0.99,
-        tau:               float = 0.005,
-        policy_delay:      int   = 2,
-        target_noise_std:  float = 0.2,
-        target_noise_clip: float = 0.5,
-        expl_noise_std:    float = 0.15,
+        discount:          float = 0.99,   # gamma
+        tau:               float = 0.005,  # soft-update rate for target networks
+        policy_delay:      int   = 2,      # actor updated every N critic updates
+        target_noise_std:  float = 0.2,    # Trick 3: stddev of target smoothing noise
+        target_noise_clip: float = 0.5,    # Trick 3: clip noise to +/- this value
+        expl_noise_std:    float = 0.1,    # stddev of Gaussian exploration noise
         batch_size:        int   = 256,
-        buffer_size:       int   = 300_000,
+        buffer_size:       int   = 100_000,
         hidden_dim:        int   = 256,
-        warmup_steps:      int   = 5_000,
-        updates_per_step:  int   = 2,
-        max_grad_norm:     float = 1.0,
+        warmup_steps:      int   = 1_000,  # random actions before training starts
         device:            str   = "cpu",
     ):
         self.env               = env
@@ -1039,8 +969,6 @@ class DiffDriveTD3Agent:
         self.expl_noise_std    = expl_noise_std
         self.batch_size        = batch_size
         self.warmup_steps      = warmup_steps
-        self.updates_per_step  = updates_per_step
-        self.max_grad_norm     = max_grad_norm
         self.device            = torch.device(device)
 
         obs_dim     = env.observation_space.shape[0]
@@ -1048,26 +976,33 @@ class DiffDriveTD3Agent:
         action_low  = env.action_space.low
         action_high = env.action_space.high
 
+        # Cache action bounds as tensors on the right device (used for clipping in _update)
         self.action_low_t  = torch.as_tensor(action_low,  dtype=torch.float32, device=self.device)
         self.action_high_t = torch.as_tensor(action_high, dtype=torch.float32, device=self.device)
 
+        # ── Networks ──────────────────────────────────────────────────
+        # Deterministic actor (same architecture as DDPG)
         self.actor        = Actor(obs_dim, action_dim, action_low, action_high, hidden_dim).to(self.device)
         self.actor_target = Actor(obs_dim, action_dim, action_low, action_high, hidden_dim).to(self.device)
         self.actor.apply(init_weights)
         self.actor_target.load_state_dict(self.actor.state_dict())
 
+        # Twin critics (same DoubleCritic class SAC uses)
         self.critic        = DoubleCritic(obs_dim, action_dim, hidden_dim).to(self.device)
         self.critic_target = DoubleCritic(obs_dim, action_dim, hidden_dim).to(self.device)
         self.critic_target.load_state_dict(self.critic.state_dict())
 
+        # ── Optimisers ────────────────────────────────────────────────
         self.actor_optim  = torch.optim.Adam(self.actor.parameters(),  lr=actor_lr)
         self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
 
+        # ── Replay buffer (NumPy, same one DDPG uses) ─────────────────
         self.buffer = ReplayBuffer(obs_dim, action_dim, buffer_size)
 
-        self.total_steps   = 0
-        self.total_updates = 0
-        self.training_info = []
+        # ── Bookkeeping ───────────────────────────────────────────────
+        self.total_steps   = 0   # env steps taken so far
+        self.total_updates = 0   # gradient updates done so far (drives policy_delay)
+        self.training_info = []  # per-update losses
 
     # ------------------------------------------------------------------
     # Action selection
@@ -1088,7 +1023,7 @@ class DiffDriveTD3Agent:
             return self.env.action_space.sample().astype(np.float32)
 
         # Forward pass through the deterministic actor
-        obs_t = torch.as_tensor(_normalize_obs(obs, self.env), dtype=torch.float32, device=self.device).unsqueeze(0)
+        obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
         with torch.no_grad():
             action = self.actor(obs_t).cpu().numpy()[0]
 
@@ -1275,7 +1210,7 @@ class DiffDriveTD3Agent:
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
 
-                self.buffer.add(obs, action, reward, next_obs, terminated)
+                self.buffer.add(obs, action, reward, next_obs, done)
                 obs              = next_obs
                 ep_reward       += reward
                 self.total_steps += 1

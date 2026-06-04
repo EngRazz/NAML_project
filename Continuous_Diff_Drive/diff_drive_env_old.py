@@ -23,7 +23,7 @@ class DiffDriveEnv(gym.Env):
     Reward:
         - Dense: improvement in distance to goal at each step
         - LiDAR shaping: safer moves near obstacles are rewarded
-        - Collision: -100, episode ends
+        - Collision: -50, episode ends
         - Goal reached: +100, episode ends
     """
 
@@ -34,20 +34,19 @@ class DiffDriveEnv(gym.Env):
     HUD_HEIGHT   = 60
     FPS          = 30
 
-    GOAL_REWARD = 100.0
-    COLLISION_REWARD = -100.0
-    TIMEOUT_REWARD = -50.0
+    GOAL_REWARD = 500.0
+    COLLISION_REWARD = -200.0
+    TIMEOUT_REWARD = -150.0
     SAFE_DISTANCE = 0.5
     FRONT_SAFE_DISTANCE = 1.0
-    GOAL_BLOCK_DISTANCE = 0.8          # was 2.0 — only suppress progress weight when obstacle is truly close
-    GOAL_PROGRESS_WEIGHT = 10.0
-    BLOCKED_GOAL_PROGRESS_WEIGHT = 1.0
-    DANGER_REDUCTION_WEIGHT = 0.0      # was 3.0 — zeroed out: redundant and risks oscillation incentive
-    DANGER_PENALTY_WEIGHT = 0.5
-    FRONT_DANGER_PENALTY_WEIGHT = 0.5
-    ORIENTATION_WEIGHT = 0.3           # was 0.2 — slightly stronger heading guidance
-    ANGULAR_PENALTY_WEIGHT = 0.02      # new — discourages aimless spinning
-    TIME_PENALTY = -0.5
+    GOAL_BLOCK_DISTANCE = 2.0
+    GOAL_PROGRESS_WEIGHT = 8.0
+    BLOCKED_GOAL_PROGRESS_WEIGHT = 3.0
+    DANGER_REDUCTION_WEIGHT = 3.0
+    DANGER_PENALTY_WEIGHT = 2.0
+    FRONT_DANGER_PENALTY_WEIGHT = 1.0
+    ORIENTATION_WEIGHT = 0.2
+    TIME_PENALTY = -0.02
 
     def __init__(
         self,
@@ -113,10 +112,9 @@ class DiffDriveEnv(gym.Env):
         return math.sqrt((px - cx) ** 2 + (py - cy) ** 2)
     
     def _lidar_clearance(self, lidar):
-        """Obstacle clearance estimate in metres — uses minimum LiDAR reading
-        so a single close ray fires the safety penalty immediately."""
+        """Robust obstacle clearance estimate in metres from LiDAR readings."""
         lidar = np.asarray(lidar, dtype=np.float32)
-        return float(np.min(lidar))
+        return float(np.percentile(lidar, 20))
 
     def _front_clearance(self, lidar):
         """Minimum LiDAR distance in the forward +/-45 degree sector."""
@@ -199,7 +197,6 @@ class DiffDriveEnv(gym.Env):
             "reward_danger_penalty": 0.0,
             "reward_front_penalty": 0.0,
             "reward_orientation": 0.0,
-            "reward_angular_penalty": 0.0,
             "goal_blocked": False,
             "lidar_clearance": self._lidar_clearance(curr_lidar),
             "front_clearance": self._front_clearance(curr_lidar),
@@ -476,9 +473,6 @@ class DiffDriveEnv(gym.Env):
             #
             # Fist versione:
             reward, reward_components = self._reward_components(dist, curr_lidar)
-            reward_angular_penalty = -self.ANGULAR_PENALTY_WEIGHT * abs(v_angular)
-            reward += reward_angular_penalty
-            reward_components["reward_angular_penalty"] = reward_angular_penalty
             #
             #
             # Second version
@@ -511,8 +505,6 @@ class DiffDriveEnv(gym.Env):
         self._last_lidar = curr_lidar
 
         truncated = self.current_step >= self.max_step
-        if truncated and not terminated:
-            reward += self.TIMEOUT_REWARD
 
         info = {
             "dist_to_goal": dist,
