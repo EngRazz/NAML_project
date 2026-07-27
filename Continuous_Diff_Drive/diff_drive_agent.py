@@ -1021,12 +1021,13 @@ class DiffDriveTD3Agent:
         policy_delay:      int   = 2,
         target_noise_std:  float = 0.2,
         target_noise_clip: float = 0.5,
-        expl_noise_std:    float = 0.15,
+        expl_noise_std:    float = 0.2,
+        expl_noise_clip:   float = 0.5,
         batch_size:        int   = 256,
         buffer_size:       int   = 300_000,
         hidden_dim:        int   = 256,
         warmup_steps:      int   = 5_000,
-        updates_per_step:  int   = 2,
+        updates_per_step:  int   = 1,
         max_grad_norm:     float = 1.0,
         device:            str   = "cpu",
     ):
@@ -1037,6 +1038,7 @@ class DiffDriveTD3Agent:
         self.target_noise_std  = target_noise_std
         self.target_noise_clip = target_noise_clip
         self.expl_noise_std    = expl_noise_std
+        self.expl_noise_clip   = expl_noise_clip
         self.batch_size        = batch_size
         self.warmup_steps      = warmup_steps
         self.updates_per_step  = updates_per_step
@@ -1058,10 +1060,22 @@ class DiffDriveTD3Agent:
 
         self.critic        = DoubleCritic(obs_dim, action_dim, hidden_dim).to(self.device)
         self.critic_target = DoubleCritic(obs_dim, action_dim, hidden_dim).to(self.device)
+        # DoubleCritic defaults to xavier init (SAC's choice). Override with the
+        # same small orthogonal init DDPG's critic uses — it keeps initial
+        # Q-values near zero, which bootstraps far more stably. (TD3-only: SAC
+        # builds its own DoubleCritic instance and is untouched.)
+        self.critic.apply(init_weights)
         self.critic_target.load_state_dict(self.critic.state_dict())
 
         self.actor_optim  = torch.optim.Adam(self.actor.parameters(),  lr=actor_lr)
         self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
+
+        # Temporally-correlated OU exploration (same as DDPG). Uncorrelated
+        # Gaussian noise never threads past the obstacles to discover the goal
+        # in this env, so TD3 settles into a "park in empty space" local optimum
+        # (timeout -50 beats collision -100). OU's correlated drives/turns are
+        # what let the policy find the goal basin during exploration.
+        self.ou_noise = OUNoise(action_dim, sigma=self.expl_noise_std)
 
         self.buffer = ReplayBuffer(obs_dim, action_dim, buffer_size)
 
@@ -1077,9 +1091,9 @@ class DiffDriveTD3Agent:
         """
         Choose an action given an observation.
 
-        During training (add_noise=True) Gaussian noise is added to the actor's
-        output for exploration. TD3 uses plain Gaussian noise (not OU like DDPG)
-        — simpler, and equally effective in the original paper.
+        During training (add_noise=True) temporally-correlated OU noise is added
+        to the actor's output for exploration, in raw action units and clipped to
+        +/- expl_noise_clip — identical to the DDPG agent's exploration scheme.
 
         At evaluation time set add_noise=False for pure exploitation.
         """
@@ -1093,8 +1107,10 @@ class DiffDriveTD3Agent:
             action = self.actor(obs_t).cpu().numpy()[0]
 
         if add_noise:
-            # Gaussian exploration noise, then clip to action bounds
-            noise  = np.random.normal(0.0, self.expl_noise_std, size=action.shape)
+            # OU exploration noise (temporally correlated), added in raw action
+            # units and clipped to +/- expl_noise_clip — matches DDPG exactly
+            # (no per-dimension half-range scaling). Final action clipped to bounds.
+            noise  = np.clip(self.ou_noise.sample(), -self.expl_noise_clip, self.expl_noise_clip)
             action = np.clip(
                 action + noise,
                 self.env.action_space.low,
@@ -1116,10 +1132,10 @@ class DiffDriveTD3Agent:
         """
         batch = self.buffer.sample(self.batch_size)
 
-        states      = torch.FloatTensor(batch["states"]).to(self.device)
+        states      = torch.as_tensor(_normalize_obs_batch(batch["states"], self.env), dtype=torch.float32, device=self.device)
         actions     = torch.FloatTensor(batch["actions"]).to(self.device)
         rewards     = torch.FloatTensor(batch["rewards"]).to(self.device)
-        next_states = torch.FloatTensor(batch["next_states"]).to(self.device)
+        next_states = torch.as_tensor(_normalize_obs_batch(batch["next_states"], self.env), dtype=torch.float32, device=self.device)
         dones       = torch.FloatTensor(batch["dones"]).to(self.device)
 
         # ── Compute TD target (no gradients) ──────────────────────────
@@ -1145,6 +1161,7 @@ class DiffDriveTD3Agent:
 
         self.critic_optim.zero_grad()
         critic_loss.backward()
+        _clip_grad_norm(self.critic, self.max_grad_norm)
         self.critic_optim.step()
 
         self.total_updates += 1
@@ -1158,6 +1175,7 @@ class DiffDriveTD3Agent:
 
             self.actor_optim.zero_grad()
             actor_loss.backward()
+            _clip_grad_norm(self.actor, self.max_grad_norm)
             self.actor_optim.step()
 
             # Soft-update BOTH target networks only when the actor is updated
@@ -1264,6 +1282,7 @@ class DiffDriveTD3Agent:
 
         for ep in tqdm(range(num_episodes), desc="TD3 Training"):
             obs, _    = env.reset()
+            self.ou_noise.reset()
             done      = False
             ep_reward = 0.0
             ep_c_loss = []
@@ -1282,10 +1301,11 @@ class DiffDriveTD3Agent:
 
                 # Learn once buffer has enough data and warmup is over
                 if self.buffer.ready(self.batch_size) and self.total_steps >= self.warmup_steps:
-                    c_loss, a_loss = self._update()
-                    ep_c_loss.append(c_loss)
-                    if a_loss is not None:   # actor only updates every policy_delay steps
-                        ep_a_loss.append(a_loss)
+                    for _ in range(self.updates_per_step):
+                        c_loss, a_loss = self._update()
+                        ep_c_loss.append(c_loss)
+                        if a_loss is not None:   # actor only updates every policy_delay steps
+                            ep_a_loss.append(a_loss)
 
             episode_rewards.append(ep_reward)
             episode_lengths.append(list(env.length_queue)[-1])
@@ -1368,11 +1388,9 @@ class DiffDriveTD3Agent:
         axes[0, 0].plot(episodes, rewards, color="steelblue", alpha=0.5, linewidth=0.8)
         window = 100
         if len(rewards) >= window:
-            means, stds = self.get_smooth_statistics(rewards, window)
+            means, _ = self.get_smooth_statistics(rewards, window)
             x_axis = episodes[window - 1:]
             axes[0, 0].plot(x_axis, means, color="orange", linewidth=1.5, label=f"MA({window})")
-            axes[0, 0].fill_between(x_axis, means - 2 * stds, means + 2 * stds,
-                                    color="orange", alpha=0.2, label="Confidence (2 std)")
             axes[0, 0].legend(fontsize=8)
         axes[0, 0].set_title("Episode Reward")
         axes[0, 0].set_ylabel("Reward")
