@@ -90,4 +90,4 @@ Directories are created before use. Separate runs and algorithms cannot overwrit
 
 Automated test and notebook/report validation scripts are not included in the current checkout. For a quick workflow check, use a short discrete run as shown above and inspect its saved metrics and plots. Short runs check execution; they do not establish learning performance.
 
-For report compilation and layout verification, upload `main_new.tex` and `figures/` to Overleaf as described in the [report guide](Report/README.md).
+For report compilation and layout verification, upload `Report/main.tex` and `Report/figures/` to Overleaf as described in the [report guide](Report/README.md).

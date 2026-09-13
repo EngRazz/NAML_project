@@ -1,15 +1,15 @@
 # Report figure inventory
 
-Upload this complete directory together with `main_new.tex` to Overleaf. The revised report includes **fourteen current training figures** from completed runs of the corrected implementation: five discrete and nine continuous. Four older DDPG/TD3 images remain preserved separately under their original names; they are no longer used as the report's continuous training figures.
+Upload this complete directory together with `main.tex` to Overleaf. The revised report includes **fourteen current training figures** from completed runs of the corrected implementation: five discrete and nine continuous. Four older DDPG/TD3 images remain preserved separately under their original names; they are no longer used as the report's continuous training figures.
 
 ## Selected continuous runs
 
-Selection uses the latest completed training run for each algorithm, not the best measured return. All three runs use seed 0, physical observation normalization (`physical-observation-v1`), the corrected reward (`navigation-cutoff-v2`), external cutoffs that retain bootstrapping, and no warm-start checkpoint. Their stored Git metadata marks the working tree as modified, so the commit hash alone is not a complete source snapshot.
+The figures use the latest completed training run for each algorithm. TD3's latest run follows hyperparameter tuning; these selections therefore do not constitute a comparison with equal tuning effort. DDPG and SAC were trained on 10 September 2026 and TD3 on 13 September 2026. All three use seed 0, physical observation normalization (`physical-observation-v1`), the corrected reward (`navigation-cutoff-v2`), external cutoffs that retain bootstrapping, and no warm-start checkpoint. Their stored Git metadata marks the working tree as modified, so the commit hash alone is not a complete source snapshot.
 
 | Algorithm | Source run under `artifacts/continuous/` | Completed episodes |
 |---|---|---:|
 | DDPG | [ddpg/20260910T154140101411Z_seed0_3d2d5e39](../../artifacts/continuous/ddpg/20260910T154140101411Z_seed0_3d2d5e39) | 5,000 |
-| TD3 | [td3/20260910T205530372576Z_seed0_2e48e740](../../artifacts/continuous/td3/20260910T205530372576Z_seed0_2e48e740) | 5,000 |
+| TD3 | [td3/20260913T102310246485Z_seed0_5cf3e17f](../../artifacts/continuous/td3/20260913T102310246485Z_seed0_5cf3e17f) | 5,000 |
 | SAC | [sac/20260910T181357962640Z_seed0_88a0e82c](../../artifacts/continuous/sac/20260910T181357962640Z_seed0_88a0e82c) | 3,000 |
 
 ## Included continuous figures
@@ -34,7 +34,7 @@ Every report image below is an exact copy of the corresponding PNG under its sel
 - Plot smoothing uses the preceding **up to 100 episodes**. All three reward bands are rolling mean ± two rolling population standard deviations within one run, not confidence intervals across training seeds.
 - Success plots show the rolling fraction of episodes that reach the goal. Binary success and collision indicators are omitted. `outcomes.png` contains no goal-distance panel; distance is in the separate figure.
 - Losses are averaged over the updates performed in each episode. Missing early losses mean no update occurred. SAC temperature is an episode average over updates, or its current value before learning begins; it is not a directly measured entropy curve.
-- Distances include both successes and failures. The 10 m upper axis is a display limit, not the maximum possible distance. Top markers represent 25 DDPG, 76 TD3 and 15 SAC episodes above 10 m. Neither means nor reported statistics clip those values.
+- Distances include both successes and failures. The 10 m upper axis is a display limit, not the maximum possible distance. Top markers represent 25 DDPG, 44 TD3 and 15 SAC episodes above 10 m. Neither means nor reported statistics clip those values.
 - CSV and plot episode numbers count completed episodes from 1. Recording filenames use zero-based indices; `episode_500.mp4` follows completed-episode count 501.
 
 The report's numerical summaries below use the **last 250 episodes**, so they differ from the 100-episode endpoints drawn in the figures. They were recomputed directly from each selected run's `metrics.csv`.
@@ -42,10 +42,25 @@ The report's numerical summaries below use the **last 250 episodes**, so they di
 | Algorithm | Last episode | Mean return | Success | Mean length | Mean distance (m) | Collisions | Cutoffs |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | DDPG | 5,000 | 118.49 | 85.2% | 169.04 | 1.29 | 28 / 250 | 9 / 250 |
-| TD3 | 5,000 | -8.67 | 53.2% | 473.82 | 3.36 | 21 / 250 | 96 / 250 |
+| TD3 | 5,000 | 128.22 | 88.8% | 194.29 | 1.00 | 13 / 250 | 15 / 250 |
 | SAC | 3,000 | 106.71 | 83.2% | 214.08 | 1.31 | 26 / 250 | 16 / 250 |
 
-The final 100-episode success rates drawn in the figures are 82% for DDPG, 60% for TD3 and 79% for SAC. The selected TD3 run does not reproduce the old historical run's high training success: its final 250-episode success is 53.2%, with 38.4% cutoffs. Its peak episode-averaged critic loss is 3,674.03 at episode 2,530; a temporal association with poorer navigation does not identify the cause. The report's earlier claims about that algorithm's historical performance were replaced accordingly.
+The final 100-episode success rates drawn in the figures are 82% for DDPG, 89% for TD3 and 79% for SAC. Tuned TD3's final 100-episode mean return is 130.54, length 192.68 and distance 0.91 m. Its final 250-episode cutoff fraction is 6.0%. The run improves substantially but is not monotonic: the window ending at episode 3,000 reaches 93.6% success and return 141.79, whereas episodes 4,501–4,750 fall to 78.8% success before recovery. Critic loss remains nonzero; its maximum episode average is 142.35 at episode 40, rather than the earlier run's extreme mid-training spike.
+
+### TD3 tuning and current evaluation
+
+Relative to [the initial TD3 run](../../artifacts/continuous/td3/20260910T205530372576Z_seed0_2e48e740), the saved agent settings differ only in `critic_lr` (`1e-3` → `3e-4`) and `updates_per_step` (2 → 1). The task, seed, 5,000-episode budget and other agent settings were retained, and training restarted from scratch. Final-block success increased from 53.2% to 88.8%; the joint change does not isolate either parameter's contribution. The earlier run's plots and metrics remain in their original artifact directory.
+
+The selected TD3 run collected **1,301,110 training transitions**, with **1,296,111 critic updates** and **648,055 actor updates**. With `policy_delay=2`, the actor and targets now update once per two environment steps after warmup. Different episode lengths and update ratios prevent treating equal episode budgets as equal optimization budgets.
+
+Both current evaluation configurations below explicitly identify the selected tuned TD3 checkpoint, use its saved dynamics/reward, and disable exploration noise. The fixed-map episode uses seed 1234; the sampled-layout run uses seeds 1234–1243. Means include the failed episode.
+
+| Evaluation run under `artifacts/continuous/td3/` | Successes | Mean return | Mean steps | Mean final distance |
+|---|---:|---:|---:|---:|
+| [20260913T131252423944Z_seed1234_be0e9c73](../../artifacts/continuous/td3/20260913T131252423944Z_seed1234_be0e9c73) — fixed map | 1/1 | 167.09 | 127 | 0.432 m |
+| [20260913T131254673271Z_seed1234_dd1e83d8](../../artifacts/continuous/td3/20260913T131254673271Z_seed1234_dd1e83d8) — sampled layouts | 9/10 | 135.17 | 206.5 | 1.04 m |
+
+The sampled check has no collisions and one 1,000-step cutoff, ending 6.36 m from the goal. These small-sample greedy results support the improvement while retaining a clear limitation; they are not the historical three-agent benchmark or the full controlled comparison.
 
 ## Historical figures preserved but not displayed as current results
 
@@ -56,7 +71,7 @@ The final 100-episode success rates drawn in the figures are 82% for DDPG, 60% f
 | `td3_diff_drive_training_curves.png` | `archive/notebooks/Continuous_Diff_Drive/train_td3.ipynb`, cell 15, output 0. |
 | `td3_diff_drive_training_curves2.png` | Same archived notebook, cell 15, output 1. |
 
-Archived notebook cell/output indices are zero-based. Their content hashes remain in `archive/notebooks/manifest.json`. The historical three-agent fixed-map benchmark in the report still comes from the archived comparison notebook; it does not evaluate the new checkpoints. Current DDPG-only evaluation logs are identified separately in the report.
+Archived notebook cell/output indices are zero-based. Their content hashes remain in `archive/notebooks/manifest.json`. The historical three-agent fixed-map benchmark in the report still comes from the archived comparison notebook; it does not evaluate the new checkpoints. Current DDPG and tuned TD3 evaluation logs are identified separately in the report.
 
 ## Selected discrete runs
 
@@ -127,13 +142,17 @@ These hashes identify the exact copied PNGs and the numerical inputs used for th
 | `sac_training_curves.png` | `1574c00c4f83446ceb3b1974cd3f887cf54804b74919c87f5a4478db6696fe83` |
 | `sac_outcomes.png` | `8baacf35c46bcdb2f0d85ef7c642bdcb63f0c753d97394fe404e59301779f27e` |
 | `sac_final_goal_distance.png` | `345f89c914b0d54e83163d1248049d78a163118bd7680f2c64d7cf52dd150693` |
-| `td3_training_curves.png` | `af8a567ddafdb5cd3b83e1150fdb1d116f27e62b74b0a95152818a18f38b5709` |
-| `td3_outcomes.png` | `45b2b9ab2539c6bb42049b578d2be2b45d53c8953a5ae2cfc5faed29e35c9bf0` |
-| `td3_final_goal_distance.png` | `255da841287e4c1d206c0e62bc620241ce2f410f4fac62f70832ddcbcdb2e8e8` |
+| `td3_training_curves.png` | `c31125157f477e71dd970bc6174f1598d25f14470ea1af68001f06115117cbba` |
+| `td3_outcomes.png` | `f446288561f39d162e8f74b42f60eb52b26fda07fe313eed884015dfec7c9462` |
+| `td3_final_goal_distance.png` | `99c0495eac07d49991e1a6c473160f0c4a5d248029928f559041b4789bdada81` |
 | DDPG selected run: `metrics.csv` | `d7809f364156a436e689f6308eaee7b778250496bc784cb09f0b4ff4576bfe88` |
 | DDPG selected run: `config.json` | `6450ddd0843d711d9bb5cb36e2fe7320e01d05310cde75e5c231d6b182245bcc` |
-| TD3 selected run: `metrics.csv` | `c406eb6577c5cc9797e6e0e08020b6f5db52b13a1d4c23a42b5cd27749007999` |
-| TD3 selected run: `config.json` | `170b0eb3f6a448d86f1968f00c7c64415bc30b08393327878ca8c8d80e1f817e` |
+| TD3 selected run: `metrics.csv` | `f515a95ecd13ee6c36587679fc8c975328c36ca63e0dd682171df2e275bf1f3f` |
+| TD3 selected run: `config.json` | `e052bf509b7e4b0aa81852e83eef91750409d6ea2d3b651c16d3f6c2bb2e8595` |
+| TD3 current fixed-map evaluation: `metrics.csv` | `8ca95eb2584f94e004d32ff7013134481fb6c63aebbc0e5ed308df9b63f8ea01` |
+| TD3 current fixed-map evaluation: `config.json` | `21ab6484db67f392ab276eb491fddae0134472b9090711b94f664712e87e2aa8` |
+| TD3 current sampled-layout evaluation: `metrics.csv` | `ad6ae055b416fef0174a79eaf21850f4cdbf767dd7d284f5e1e24b2ec86bfd60` |
+| TD3 current sampled-layout evaluation: `config.json` | `fa394a86639d117e6065d71932bfc82eead192389cf3f3bf60ff8029f2f5dfae` |
 | SAC selected run: `metrics.csv` | `929c9d6eeb5af5ee726af8943d48319e6137c44e4e7373f322fb9390db1c1368` |
 | SAC selected run: `config.json` | `918ebf28f66c7ca9214bc290f646d332e26a9c755459b241b6a6f44195037bac` |
 

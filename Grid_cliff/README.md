@@ -31,6 +31,8 @@ python -m Grid_cliff.run_grid_cliff --episodes 5000 --seed 0
 
 Add `--record` for optional demonstrations every 500 episodes and one recorded greedy evaluation. The deterministic fixed map is evaluated once per algorithm; duplicate identical episodes are not independent observations.
 
+New cliff recordings keep the native 800×250 resolution, preserving square 50×50-pixel cells and all grid lines. Restart the notebook kernel before recording with updated code; older 320-pixel videos require a new evaluation recording from the saved checkpoint.
+
 Training recordings use zero-based names: `episode_0.mp4`, `episode_500.mp4`, etc., each recorded after that training episode. A summary of every 500 completed episodes stays above the updating total progress bar. The outcome plot shows rolling success rate without binary success/collision indicators.
 
 Training returns a trained `TabularAgent` and `RunResult` through `train_q_learning()` or `train_sarsa()`. Run results contain episode dictionaries and artifact paths. The runner saves the joint return/success/length figure in a unique `artifacts/cliff/comparison/` run; individual runs contain numerical tables, CSV metrics and plots.

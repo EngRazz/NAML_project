@@ -259,15 +259,23 @@ class TrainingProgress:
 
 
 class SmallFrames(gym.Wrapper):
+    """Keep native frames up to the width limit; filter larger frames when shrinking."""
+    def __init__(self, env, max_width=800):
+        super().__init__(env)
+        if max_width < 1:
+            raise ValueError("max_width must be positive")
+        self.max_width = max_width
+
     def render(self):
         frame = self.env.render()
-        if frame is None or frame.shape[1] <= 320:
+        if frame is None or frame.shape[1] <= self.max_width:
             return frame
-        # Index-based downsampling avoids a second imaging dependency.
-        height = max(1, round(frame.shape[0] * 320 / frame.shape[1]))
-        ys = np.linspace(0, frame.shape[0] - 1, height).astype(int)
-        xs = np.linspace(0, frame.shape[1] - 1, 320).astype(int)
-        return np.ascontiguousarray(frame[ys[:, None], xs])
+        import pygame
+        height = max(1, round(frame.shape[0] * self.max_width / frame.shape[1]))
+        # Area filtering includes thin grid lines that pixel skipping can miss.
+        surface = pygame.surfarray.make_surface(np.transpose(frame, (1, 0, 2)))
+        resized = pygame.transform.smoothscale(surface, (self.max_width, height))
+        return np.ascontiguousarray(np.transpose(pygame.surfarray.array3d(resized), (1, 0, 2)))
 
 
 class LimitedRecordVideo(gym.wrappers.RecordVideo):
@@ -289,10 +297,12 @@ class LimitedRecordVideo(gym.wrappers.RecordVideo):
             self.stop_recording()
 
 
-def recording_env(env, directory, prefix="episode_0", max_frames=300):
+def recording_env(env, directory, prefix="episode_0", max_frames=300, max_width=800):
     """Record one demonstration as <prefix>.mp4, without a wrapper episode suffix."""
     if max_frames < 1:
         raise ValueError("max_frames must be positive")
+    if max_width < 1:
+        raise ValueError("max_width must be positive")
     Path(directory).mkdir(parents=True, exist_ok=True)
     if (Path(directory) / f"{prefix}.mp4").exists() or any(Path(directory).glob(f"{prefix}-*.mp4")):
         raise FileExistsError(f"Video prefix already exists: {directory}/{prefix}")
@@ -301,7 +311,7 @@ def recording_env(env, directory, prefix="episode_0", max_frames=300):
         # above prevents overwriting an actual video with this name or legacy prefix.
         warnings.filterwarnings("ignore", message=".*Overwriting existing videos.*")
         return LimitedRecordVideo(
-            SmallFrames(env), video_folder=str(directory), name_prefix=prefix,
+            SmallFrames(env, max_width=max_width), video_folder=str(directory), name_prefix=prefix,
             episode_trigger=lambda episode: episode == 0,
             max_frames=max_frames, disable_logger=True,
         )

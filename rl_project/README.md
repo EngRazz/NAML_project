@@ -29,7 +29,9 @@ If you updated the code while a notebook was running, its existing training call
 
 Training videos are named `episode_0.mp4`, `episode_500.mp4`, `episode_1000.mp4`, and so on when `record_every=500`. The filename uses the zero-based training episode index: episode 0 is the first training episode, and its demonstration is recorded after that episode's updates. Thus video index 500 corresponds to completed-episode count 501 in the CSV. Every new run follows this convention. Standalone evaluation records `episode_0.mp4`; shared comparisons use algorithm names to distinguish their videos. `video_sort_key` orders videos numerically in notebooks.
 
-Separate greedy demonstrations preserve the learner's Python, NumPy and PyTorch RNG state. Rendering is downsampled before buffering to at most 320 pixels wide. `LimitedRecordVideo` bounds the number of captured frames exactly, including the reset frame. Stopping recording never stops the measured rollout. Wrappers and environments are closed in `finally` blocks.
+Separate greedy demonstrations preserve the learner's Python, NumPy and PyTorch RNG state. Recordings keep the native resolution up to 800 pixels wide; larger frames are shrunk with area filtering while preserving the aspect ratio. Cliff videos therefore retain their native 800×250 image and square 50×50 cells. The earlier 320-pixel pixel-skipping method could erase thin grid lines. Existing evaluation videos can be regenerated from a checkpoint to benefit from the fix; restart the notebook kernel and rerun evaluation with `RECORD=True`. No retraining is needed. The low-level `recording_env(..., max_width=800)` option can set a different width limit.
+
+`LimitedRecordVideo` still caps each recording at 300 frames, including the reset frame. Stopping recording never stops the measured rollout. Wrappers and environments are closed in `finally` blocks.
 
 Seeds cover Python, NumPy, PyTorch, environment resets and action spaces. Use the same seed, device and dependency versions when comparing repeated runs; bitwise agreement across different devices or dependency versions is not guaranteed.
 
