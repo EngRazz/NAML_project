@@ -1,98 +1,29 @@
-import numpy as np
-import gymnasium
-from grid_flag_agent import GridFlagAgent
+"""Run from the project root: python -m Grid_flag.run_grid_flag --help."""
+import argparse
+from Grid_flag.grid_flag_env import GridFlagEnv
+from Grid_flag.grid_flag_agent import GridFlagAgent
 
-# ── Environment config ────────────────────────────────────────────────────────
-
-FLAG_CELLS = [
-    (1, 2),
-    (3, 7),
-    (6, 1),
-    (7, 8),
-    (9, 4),
-]
-
-ENV_KWARGS = dict(
-    grid_size=(10, 10),
-    max_step=100,
-    agent_start=(5, 5),
-    flag_value=10,
-    flag_cells=FLAG_CELLS,
-)
-
-gymnasium.register(
-    id="GridFlagEnv",
-    entry_point="grid_flag_env:GridFlagEnv",
-    kwargs=ENV_KWARGS,
-)
-
-# ── Hyperparameters ───────────────────────────────────────────────────────────
-
-NUM_EPISODES    = 5_000   # Total training episodes
-RECORD_EVERY    = 500     # Save a video every N training episodes
-LEARNING_RATE   = 0.1
-INITIAL_EPSILON = 1.0
-FINAL_EPSILON   = 0.05
-# Decay epsilon linearly so it reaches FINAL_EPSILON by the last episode
-EPSILON_DECAY   = (INITIAL_EPSILON - FINAL_EPSILON) / NUM_EPISODES
-DISCOUNT_FACTOR = 0.95
-
-# ── Training ──────────────────────────────────────────────────────────────────
-
-# RecordVideo requires render_mode="rgb_array" to capture frames.
-# We wrap with:
-#   RecordVideo        – saves an .mp4 every RECORD_EVERY episodes
-#   RecordEpisodeStatistics – tracks reward, length, and time per episode
-# The base env must use render_mode="rgb_array" for RecordVideo to work
-train_env = gymnasium.make("GridFlagEnv", render_mode="rgb_array")
-
-agent = GridFlagAgent(
-    env=train_env,
-    learning_rate=LEARNING_RATE,
-    initial_epsilon=INITIAL_EPSILON,
-    epsilon_decay=EPSILON_DECAY,
-    final_epsilon=FINAL_EPSILON,
-    discount_factor=DISCOUNT_FACTOR,
-)
-
-agent.train_recorded(
-    num_episodes=NUM_EPISODES,
-    video_folder="videos/training",
-    record_every=RECORD_EVERY,
-    log_every=500,
-)
-
-# ── Evaluation ────────────────────────────────────────────────────────────────
-
-# Set epsilon to 0 so the agent acts greedily (pure exploitation, no exploration)
-agent.eval_recorded(
-    video_folder="videos/evaluation",
-    name_prefix="eval",
-)
+FLAG_CELLS = [(1, 2), (3, 7), (6, 1), (7, 8), (9, 4)]
+ENV_KWARGS = dict(grid_size=(10, 10), max_step=100, agent_start=(5, 5),
+                  flag_value=10, flag_cells=FLAG_CELLS)
 
 
-# --- SARSA AGENT TRAINING AND EVALUATION -----------------------
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--episodes', type=int, default=5000)
+    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--output-root')
+    parser.add_argument('--record', action='store_true')
+    args = parser.parse_args(argv)
+    for algorithm in ('qlearning', 'sarsa'):
+        agent = GridFlagAgent(GridFlagEnv(**ENV_KWARGS), learning_rate=.1,
+                              initial_epsilon=1., final_epsilon=.05,
+                              epsilon_decay=.95/5000, discount_factor=.95, seed=args.seed)
+        result = agent.train(args.episodes, algorithm=algorithm, output_root=args.output_root,
+                             record_every=500 if args.record else None)
+        print(result.artifacts)
+        print(agent.evaluate(output_root=args.output_root, record=args.record).episodes)
 
-agent_sarsa = GridFlagAgent(
-    env=train_env,
-    learning_rate=LEARNING_RATE,
-    initial_epsilon=INITIAL_EPSILON,
-    epsilon_decay=EPSILON_DECAY,
-    final_epsilon=FINAL_EPSILON,
-    discount_factor=DISCOUNT_FACTOR,
-)
 
-agent_sarsa.train_recorded_SARSA(
-    num_episodes=NUM_EPISODES,
-    video_folder="videos/training",
-    record_every=RECORD_EVERY,
-    log_every=500,
-)
-
-# ── Evaluation ────────────────────────────────────────────────────────────────
-
-# Set epsilon to 0 so the agent acts greedily (pure exploitation, no exploration)
-agent_sarsa.eval_recorded(
-    video_folder="videos/evaluation_SARSA",
-    name_prefix="eval",
-)
+if __name__ == '__main__':
+    main()

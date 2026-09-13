@@ -1,0 +1,62 @@
+[
+  {
+    "source": "Grid_flag_2/gym_create_environment.ipynb",
+    "archive": "archive/notebooks/Grid_flag_2/gym_create_environment.ipynb",
+    "sha256": "ce51aaab72103399eeb746ee9906cde5daf1e7126f1d2110f2e4c47730c90937"
+  },
+  {
+    "source": "Grid_flag_2/gym_environment_introduction.ipynb",
+    "archive": "archive/notebooks/Grid_flag_2/gym_environment_introduction.ipynb",
+    "sha256": "9184191f8dce757e1be2ad90c75add4b1f12bbfbdd9ad6028d2595cb2b07a0ea"
+  },
+  {
+    "source": "Grid_flag_2/gym_moving_environment.ipynb",
+    "archive": "archive/notebooks/Grid_flag_2/gym_moving_environment.ipynb",
+    "sha256": "be7a08276b04cec48b8a99c1277505aabba18e66fe50f8a5f2dc6190e27d805c"
+  },
+  {
+    "source": "Grid_flag_2/gym_training_an_agent.ipynb",
+    "archive": "archive/notebooks/Grid_flag_2/gym_training_an_agent.ipynb",
+    "sha256": "06ba8dfb4cbcb87ba82ff52146933f2c0f54d80283629285b632a3b02d6756f3"
+  },
+  {
+    "source": "Grid_flag_2/testreward.ipynb",
+    "archive": "archive/notebooks/Grid_flag_2/testreward.ipynb",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "Continuous_Diff_Drive/compare_ddpg_sac_td3.ipynb",
+    "archive": "archive/notebooks/Continuous_Diff_Drive/compare_ddpg_sac_td3.ipynb",
+    "sha256": "68f35f888c721c231f6c36eb5edbad360af766b508da355f8886714b470fc7f4"
+  },
+  {
+    "source": "Continuous_Diff_Drive/eval_ddpg.ipynb",
+    "archive": "archive/notebooks/Continuous_Diff_Drive/eval_ddpg.ipynb",
+    "sha256": "4e2a409213e2dd32ebfb4422bac9d79070108983516dc43fa8200db85f4b1e3b"
+  },
+  {
+    "source": "Continuous_Diff_Drive/eval_sac.ipynb",
+    "archive": "archive/notebooks/Continuous_Diff_Drive/eval_sac.ipynb",
+    "sha256": "84f858963c6c97e89b394c4407e4c469b24600fc064fe8cacef99901618893dd"
+  },
+  {
+    "source": "Continuous_Diff_Drive/eval_td3.ipynb",
+    "archive": "archive/notebooks/Continuous_Diff_Drive/eval_td3.ipynb",
+    "sha256": "5367f1613aa34f77227b935e23953709ca121193c34d0735754fd0445791aaa7"
+  },
+  {
+    "source": "Continuous_Diff_Drive/train_ddpg.ipynb",
+    "archive": "archive/notebooks/Continuous_Diff_Drive/train_ddpg.ipynb",
+    "sha256": "251394236db9fde1bffbb3b1f5c3374f879fb8512ed067f13f8ed506b7cf1e4e"
+  },
+  {
+    "source": "Continuous_Diff_Drive/train_sac.ipynb",
+    "archive": "archive/notebooks/Continuous_Diff_Drive/train_sac.ipynb",
+    "sha256": "3e9d73977d317aec22c847b75255f48a71a025ef3b209e899bbab4e8421da90e"
+  },
+  {
+    "source": "Continuous_Diff_Drive/train_td3.ipynb",
+    "archive": "archive/notebooks/Continuous_Diff_Drive/train_td3.ipynb",
+    "sha256": "31645deddbea9fed6f32aaf0a9285e182c53e598a1fb3bf41a52051c12fe5042"
+  }
+]

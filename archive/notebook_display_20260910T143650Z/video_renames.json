@@ -1,0 +1,52 @@
+[
+  {
+    "original": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/1.mp4",
+    "current": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode_0.mp4",
+    "sha256": "1042c20821610965f7d3c8f704b9399d353610aa2b49ab8dd39f712464b9822f"
+  },
+  {
+    "original": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/1001.mp4",
+    "current": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode_1000.mp4",
+    "sha256": "1b0924a458e53e480ab8461ee56c8f4718b7b1ac84946cc4021b9118c366c12a"
+  },
+  {
+    "original": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/501.mp4",
+    "current": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode_500.mp4",
+    "sha256": "b15ac9a642e164175612cdccd4d6627c467d1b755f69fd55320e2e570c310847"
+  },
+  {
+    "original": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode-1501-episode-0.mp4",
+    "current": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode_1500.mp4",
+    "sha256": "219c894cc59ce291616927ebf0d0fee7ddc52ba5042829013ebbba15599f533f"
+  },
+  {
+    "original": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode-2001-episode-0.mp4",
+    "current": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode_2000.mp4",
+    "sha256": "87825f93d6057616ef3706e48a9b8242f4eafef4e2bd30c9728e0a2bdc0834f0"
+  },
+  {
+    "original": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode-2501-episode-0.mp4",
+    "current": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode_2500.mp4",
+    "sha256": "7b931eeb2031ded8b7f5efe2cf038818270bf715be1dc67cdbd771d58ebb985c"
+  },
+  {
+    "original": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode-3001-episode-0.mp4",
+    "current": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode_3000.mp4",
+    "sha256": "073f7fe2aa937b27d012ce7c9a8f15333ef0ef7e3c8c3523107e88036e3b9563"
+  },
+  {
+    "original": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode-3501-episode-0.mp4",
+    "current": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode_3500.mp4",
+    "sha256": "9d900d7b519a0fc0f90fab0695d81c89675bf3ea5715e14aa9ece688ed649525"
+  },
+  {
+    "original": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode-4001-episode-0.mp4",
+    "current": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode_4000.mp4",
+    "sha256": "ec1cf33e40ff8c0544660b34de831987eadfc2c39944ab16cff86461ebf6f9f6"
+  },
+  {
+    "original": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode-4501-episode-0.mp4",
+    "current": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/videos/training/episode_4500.mp4",
+    "sha256": "2e40e1302e16427955aac2ad54cc7bdc0496b9abd668377cee49f872fd041c89"
+  }
+]

@@ -36,7 +36,7 @@ class DiffDriveEnv(gym.Env):
 
     GOAL_REWARD = 100.0
     COLLISION_REWARD = -100.0
-    TIMEOUT_REWARD = -50.0
+    REWARD_VERSION = "navigation-cutoff-v2"
     SAFE_DISTANCE = 0.5
     FRONT_SAFE_DISTANCE = 1.0
     GOAL_BLOCK_DISTANCE = 0.8          # was 2.0 — only suppress progress weight when obstacle is truly close
@@ -66,6 +66,11 @@ class DiffDriveEnv(gym.Env):
         obstacle_mix    = None,
     ):
         super().__init__()
+        self.config = dict(room_size=room_size, obstacles=obstacles, random_obst=random_obst,
+                           robot_start=robot_start, goal_pos=goal_pos, max_step=max_step,
+                           n_lidar_rays=n_lidar_rays, lidar_max_range=lidar_max_range,
+                           robot_radius=robot_radius, dt=dt, render_mode=render_mode,
+                           obstacle_mode=obstacle_mode, obstacle_mix=obstacle_mix)
 
         self.room_w, self.room_h = room_size
         self.obstacles       = list(obstacles) if obstacles is not None else []
@@ -443,66 +448,10 @@ class DiffDriveEnv(gym.Env):
             terminated = True
 
         else:
-            # Alternative SAC reward experiment (reference only, from old standalone SAC env):
-            #
-            # progress = self.prev_dist - dist
-            # reward_progress = 10.0 * progress
-            #
-            # diff = self.goal_pos - self.robot_pos
-            # angle_glob = math.atan2(float(diff[1]), float(diff[0]))
-            # angle_err = abs((angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi)
-            # orientation_reward = 0.3 * (1.0 - angle_err / math.pi)
-            #
-            # min_lidar = np.min(curr_lidar)
-            # safety_penalty = 0.0
-            # if min_lidar < 0.8:
-            #     safety_penalty = -0.5 * (0.8 - min_lidar)
-            #
-            # angular_penalty = -0.02 * abs(v_angular)
-            # time_penalty = -0.01
-            #
-            # reward = (
-            #     reward_progress
-            #     + orientation_reward
-            #     + safety_penalty
-            #     + angular_penalty
-            #     + time_penalty
-            # )
-            #
-            # Timeout behavior in the old SAC env:
-            # if truncated and not terminated:
-            #     reward += self.TIMEOUT_REWARD
-            #
-            #
-            # Fist versione:
             reward, reward_components = self._reward_components(dist, curr_lidar)
             reward_angular_penalty = -self.ANGULAR_PENALTY_WEIGHT * abs(v_angular)
             reward += reward_angular_penalty
             reward_components["reward_angular_penalty"] = reward_angular_penalty
-            #
-            #
-            # Second version
-            # 1. Progress: reward getting closer, penalise moving away
-            # progress = (self.prev_dist - dist) * 8.0
-            # min_lidar = np.min(self._last_lidar)
-            # safety_reward = 0.0
-            # if min_lidar < 0.2:
-            #     safety_reward = -5.0 # Penalità fissa per pericolo imminente
-            # elif min_lidar < 0.5:
-            #     safety_reward = -2.0 * np.exp(-3.0 * min_lidar)
-            # # 2. Orientation: reward facing the goal
-            # diff       = self.goal_pos - self.robot_pos
-            # angle_glob = math.atan2(float(diff[1]), float(diff[0]))
-            # angle_err  = abs((angle_glob - self.robot_theta + math.pi) % (2 * math.pi) - math.pi) #reward term for the robot not orientated toward the goal
-            # orientation = (1.0 - angle_err / math.pi)  # 1.0 = facing goal, 0.0 = facing away
-
-            # # 3. Time penalty: small cost per step to discourage spinning in place
-            # time_penalty = -0.1 
-            # inactivity_penalty = 0.0
-            # if abs(v_linear) < 0.05:
-            #     inactivity_penalty = -0.5
-            # reward     = progress + 0.1 * orientation + time_penalty + safety_reward + inactivity_penalty
-            
             terminated = False
 
         # Update previous state trackers
@@ -510,14 +459,13 @@ class DiffDriveEnv(gym.Env):
         self._prev_lidar = curr_lidar
         self._last_lidar = curr_lidar
 
-        truncated = self.current_step >= self.max_step
-        if truncated and not terminated:
-            reward += self.TIMEOUT_REWARD
+        # An external sampling cutoff has no additional task reward or terminal value.
+        truncated = self.current_step >= self.max_step and not terminated
 
         info = {
             "dist_to_goal": dist,
             "collision": collision,
-            "goal_reached": goal_reached,
+            "goal_reached": goal_reached and not collision,
             "steps": self.current_step,
             **reward_components,
         }

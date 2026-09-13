@@ -1,8 +1,9 @@
-gymnasium
-numpy
-matplotlib
-pygame
-tqdm
-typing
-MoviePy
-torch
+# Direct dependency versions used for CPU validation with Python 3.11.
+gymnasium==1.2.3
+numpy==2.4.2
+matplotlib==3.10.8
+pygame==2.6.1
+tqdm==4.67.3
+moviepy==2.2.1
+torch==2.11.0
+ipython==9.13.0

@@ -1,0 +1,27 @@
+[
+  {
+    "original": "Continuous_Diff_Drive/train_td3.ipynb",
+    "archive": "archive/notebook_display_20260910T143650Z/Continuous_Diff_Drive/train_td3.ipynb",
+    "sha256": "5e6798b217d74e2f65df27f04b38e39fa99449d78074400f4de8ce163a81a70e"
+  },
+  {
+    "original": "Continuous_Diff_Drive/train_ddpg.ipynb",
+    "archive": "archive/notebook_display_20260910T143650Z/Continuous_Diff_Drive/train_ddpg.ipynb",
+    "sha256": "b2f8f21f3a9d54e536de60e526827cc01da1aacc3aa8dffdcfeecf107f93ccd6"
+  },
+  {
+    "original": "Continuous_Diff_Drive/train_sac.ipynb",
+    "archive": "archive/notebook_display_20260910T143650Z/Continuous_Diff_Drive/train_sac.ipynb",
+    "sha256": "0fe87d7e23434d785ed4fa7f7583b098ce5268f019b139ddfdd23bf6df281adb"
+  },
+  {
+    "original": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/plots/outcomes.png",
+    "archive": "archive/notebook_display_20260910T143650Z/artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/plots/outcomes.png",
+    "sha256": "1b8421df1c6d8a78ca37dcc223b5d0b52dbc802bb24ebb9a7f11f762eb1de164"
+  },
+  {
+    "original": "artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/plots/training_curves.png",
+    "archive": "archive/notebook_display_20260910T143650Z/artifacts/continuous/ddpg/20260910T115553729883Z_seed0_2be935f8/plots/training_curves.png",
+    "sha256": "64d9902b69dae1bbe83b7ca98581660a959e859faf8ab8bb5a84f8e91ef03208"
+  }
+]

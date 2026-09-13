@@ -130,7 +130,7 @@ class RandomCliffWalkingEnv(gym.Env):
     Random cliffs placed once at env creation. Always at least one path S->G.
     Observation: Discrete(ROWS*COLS)
     Actions: Discrete(4)
-    Reward: -1 per step, -100 on cliff (terminate), -1 on goal (terminate)
+    Reward: -1 per step, -100 on cliff (return to start), -1 on goal (terminate).
     """
 
     metadata = {"render_modes": ["ansi", "human", "rgb_array"], "render_fps": 10}
@@ -144,6 +144,8 @@ class RandomCliffWalkingEnv(gym.Env):
         layout: str = LAYOUT,
     ):
         super().__init__()
+        self.config = dict(render_mode=render_mode, map_seed=map_seed, n_cliffs=n_cliffs,
+                           max_steps=max_steps, layout=layout)
         self.rows = ROWS
         self.cols = COLS
         self.render_mode = render_mode
@@ -214,15 +216,15 @@ class RandomCliffWalkingEnv(gym.Env):
             self._agent_rc = self.start
         elif (r2, c2) == self.goal:
             terminated = True
-        elif self._steps >= self.max_steps:
-            truncated = True
+        # A fall is nonterminal, but it must still respect the rollout cutoff.
+        truncated = self._steps >= self.max_steps and not terminated
 
         if self.render_mode == "human":
             self.render()
 
         # Use the agent's actual position: after a cliff fall this is Start,
         # not the cliff tile the agent stepped onto.
-        return _idx(*self._agent_rc, cols=self.cols), reward, terminated, truncated, {}
+        return _idx(*self._agent_rc, cols=self.cols), reward, terminated, truncated, {"goal_reached": terminated, "fell": bool(self.cliff[r2, c2])}
 
     def render(self):
         if self.render_mode == "ansi":

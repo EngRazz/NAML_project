@@ -33,11 +33,13 @@ class GridFlagEnv(gym.Env):
         super().__init__()
 
         # Attributes of the environment
+        self.config = dict(grid_size=grid_size, max_step=max_step, agent_start=agent_start,
+                           flag_value=flag_value, flag_cells=flag_cells, render_mode=render_mode)
         self.grid_w, self.grid_h = grid_size
         self.max_step = max_step
         self.flag_value = flag_value
         self.agent_start = agent_start
-        self.flag_cells = flag_cells
+        self.flag_cells = [tuple(cell) for cell in flag_cells]
         
         # Attributes for rendering
         self.render_mode = render_mode
@@ -49,7 +51,8 @@ class GridFlagEnv(gym.Env):
 
         # Observation: a dict with agent position and binary flags for remaining rewards
         self.observation_space = spaces.Dict({
-            "agent" : spaces.Box(low=0, high=max(self.grid_w, self.grid_h), shape=(2,), dtype=np.int32),
+            "agent": spaces.Box(low=np.zeros(2, dtype=np.int32),
+                                high=np.array([self.grid_h-1, self.grid_w-1], dtype=np.int32), dtype=np.int32),
             "flags": spaces.MultiBinary(len(self.flag_cells))
         })
 
@@ -89,7 +92,7 @@ class GridFlagEnv(gym.Env):
         self.remaining_flags = set(self.flag_cells)
         self.current_step = 0
         self.total_reward = 0
-        self._completion_countdown = 0 # frames to keep rendering after collecting all flags
+        self._collected_flash.clear()
 
         obs = self._get_obs()
         info = {}
@@ -120,18 +123,15 @@ class GridFlagEnv(gym.Env):
 
         self.total_reward += reward
 
-        # Episode ends when time runs out
-        if len(self.remaining_flags) == 0 and self._completion_countdown == 0:
-            self._completion_countdown = 2   # ~0.2 seconds at 10 FPS to wait
-        if self._completion_countdown > 0:
-            self._completion_countdown -= 1
-        terminated = self._completion_countdown == 0 and len(self.remaining_flags) == 0
-        truncated = self.current_step >= self.max_step
+        terminated = len(self.remaining_flags) == 0
+        truncated = self.current_step >= self.max_step and not terminated
 
         obs = self._get_obs()
         info = {
             "total_reward": self.total_reward,
             "remaining_flags": len(self.remaining_flags),
+            "flags_collected": len(self.flag_cells) - len(self.remaining_flags),
+            "goal_reached": terminated,
             "steps": self.current_step,
         }
 
