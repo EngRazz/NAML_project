@@ -1,0 +1,37 @@
+{
+  "environment": "cliff",
+  "algorithm": "qlearning",
+  "seed": 0,
+  "code_version": {
+    "commit": "b52f6d15e697dfbbb2b22ee393e70fd27c55252e",
+    "dirty": true
+  },
+  "dependencies": {
+    "gymnasium": "1.2.3",
+    "numpy": "2.4.2",
+    "torch": "2.11.0",
+    "matplotlib": "3.10.8",
+    "pygame": "2.6.1",
+    "moviepy": "2.2.1"
+  },
+  "kind": "training",
+  "environment_config": {
+    "render_mode": null,
+    "map_seed": 34,
+    "n_cliffs": 12,
+    "max_steps": 200,
+    "layout": "canonical"
+  },
+  "state_encoding": "complete-tabular-v2",
+  "cutoff_semantics": "bootstrap",
+  "learning_rate": 0.1,
+  "discount": 0.99,
+  "initial_epsilon": 1.0,
+  "epsilon_decay": 0.00030000000000000003,
+  "final_epsilon": 0.1,
+  "num_episodes": 5000,
+  "max_env_steps": null,
+  "record_every": 500,
+  "log_every": 500,
+  "status": "completed"
+}

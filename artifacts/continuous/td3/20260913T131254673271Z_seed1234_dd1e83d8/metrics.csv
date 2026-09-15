@@ -1,0 +1,11 @@
+episode,seed,algorithm,scenario,reward,length,success,collision,terminated,truncated,termination_reason,final_distance,flags_collected,epsilon,exploration_mode,random_action_steps,environment_steps,critic_updates,actor_updates,critic_loss,actor_loss,alpha_loss,alpha,td_error
+1,1234,,,174.23346219941942,110,True,False,True,False,success,0.4819376766681671,,,,,,,,,,,,
+2,1235,,,165.8222153545766,127,True,False,True,False,success,0.40737855434417725,,,,,,,,,,,,
+3,1236,,,175.107647670309,106,True,False,True,False,success,0.4966198801994324,,,,,,,,,,,,
+4,1237,,,175.94141550505742,106,True,False,True,False,success,0.46006327867507935,,,,,,,,,,,,
+5,1238,,,175.8457816555598,106,True,False,True,False,success,0.46324804425239563,,,,,,,,,,,,
+6,1239,,,-180.35996867429714,1000,False,False,False,True,cutoff,6.357335567474365,,,,,,,,,,,,
+7,1240,,,165.08420258338865,130,True,False,True,False,success,0.4289468824863434,,,,,,,,,,,,
+8,1241,,,174.0293981408082,111,True,False,True,False,success,0.41897958517074585,,,,,,,,,,,,
+9,1242,,,162.82936415108747,138,True,False,True,False,success,0.4305337965488434,,,,,,,,,,,,
+10,1243,,,163.16895932030695,131,True,False,True,False,success,0.46167442202568054,,,,,,,,,,,,

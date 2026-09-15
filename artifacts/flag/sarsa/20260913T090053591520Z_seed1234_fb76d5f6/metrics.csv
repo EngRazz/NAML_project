@@ -1,0 +1,2 @@
+episode,seed,algorithm,scenario,reward,length,success,collision,terminated,truncated,termination_reason,final_distance,flags_collected,epsilon,exploration_mode,random_action_steps,environment_steps,critic_updates,actor_updates,critic_loss,actor_loss,alpha_loss,alpha,td_error
+1,1234,,,39.0,27,True,False,True,False,success,,5,,,,,,,,,,,

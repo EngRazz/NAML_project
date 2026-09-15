@@ -1,0 +1,31 @@
+{
+  "environment": "cliff",
+  "algorithm": "sarsa",
+  "seed": 1234,
+  "code_version": {
+    "commit": "b52f6d15e697dfbbb2b22ee393e70fd27c55252e",
+    "dirty": true
+  },
+  "dependencies": {
+    "gymnasium": "1.2.3",
+    "numpy": "2.4.2",
+    "torch": "2.11.0",
+    "matplotlib": "3.10.8",
+    "pygame": "2.6.1",
+    "moviepy": "2.2.1"
+  },
+  "kind": "evaluation",
+  "environment_config": {
+    "render_mode": null,
+    "map_seed": 34,
+    "n_cliffs": 12,
+    "max_steps": 200,
+    "layout": "canonical"
+  },
+  "episodes": 1,
+  "checkpoint": {
+    "path": "/Users/anthonymc/Desktop/NAML_project/artifacts/cliff/sarsa/20260913T084132538934Z_seed0_52f083d2/checkpoints/model.npz",
+    "mode": "evaluation"
+  },
+  "status": "completed"
+}

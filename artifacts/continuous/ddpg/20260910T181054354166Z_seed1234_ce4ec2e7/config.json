@@ -1,0 +1,68 @@
+{
+  "environment": "continuous",
+  "algorithm": "ddpg",
+  "seed": 1234,
+  "code_version": {
+    "commit": "cf503375949c963a5ddb5d05fcec82d5f293532c",
+    "dirty": true
+  },
+  "dependencies": {
+    "gymnasium": "1.2.3",
+    "numpy": "2.4.2",
+    "torch": "2.11.0",
+    "matplotlib": "3.10.8",
+    "pygame": "2.6.1",
+    "moviepy": "2.2.1"
+  },
+  "kind": "evaluation",
+  "environment_config": {
+    "room_size": [
+      10.0,
+      10.0
+    ],
+    "obstacles": [
+      [
+        2.0,
+        4.0,
+        3.0,
+        0.3
+      ],
+      [
+        5.0,
+        2.0,
+        0.3,
+        3.0
+      ],
+      [
+        7.0,
+        6.0,
+        1.5,
+        0.3
+      ]
+    ],
+    "random_obst": true,
+    "robot_start": [
+      1.0,
+      1.0
+    ],
+    "goal_pos": [
+      8.5,
+      8.5
+    ],
+    "max_step": 1000,
+    "n_lidar_rays": 16,
+    "lidar_max_range": 5.0,
+    "robot_radius": 0.3,
+    "dt": 0.1,
+    "render_mode": null,
+    "obstacle_mode": "curriculum",
+    "obstacle_mix": null
+  },
+  "episodes": 10,
+  "checkpoint": {
+    "path": "/Users/anthonymc/Desktop/NAML_project/artifacts/continuous/ddpg/20260910T154140101411Z_seed0_3d2d5e39/checkpoints/model.pt",
+    "mode": "evaluation",
+    "legacy_normalized_assertion": false
+  },
+  "status": "completed"
+}

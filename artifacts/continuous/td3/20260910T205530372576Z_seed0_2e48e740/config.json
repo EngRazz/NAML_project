@@ -1,0 +1,106 @@
+{
+  "environment": "continuous",
+  "algorithm": "td3",
+  "seed": 0,
+  "code_version": {
+    "commit": "cf503375949c963a5ddb5d05fcec82d5f293532c",
+    "dirty": true
+  },
+  "dependencies": {
+    "gymnasium": "1.2.3",
+    "numpy": "2.4.2",
+    "torch": "2.11.0",
+    "matplotlib": "3.10.8",
+    "pygame": "2.6.1",
+    "moviepy": "2.2.1"
+  },
+  "kind": "training",
+  "format_version": 2,
+  "preprocessing": "physical-observation-v1",
+  "reward_version": "navigation-cutoff-v2",
+  "cutoff_semantics": "bootstrap",
+  "agent_config": {
+    "actor_lr": 0.0001,
+    "critic_lr": 0.001,
+    "discount": 0.99,
+    "tau": 0.005,
+    "policy_delay": 2,
+    "target_noise_std": 0.2,
+    "target_noise_clip": 0.5,
+    "expl_noise_std": 0.2,
+    "expl_noise_clip": 0.5,
+    "batch_size": 256,
+    "buffer_size": 300000,
+    "hidden_dim": 256,
+    "warmup_steps": 5000,
+    "updates_per_step": 2,
+    "max_grad_norm": 1.0,
+    "device": "cpu",
+    "seed": 0
+  },
+  "environment_config": {
+    "room_size": [
+      10.0,
+      10.0
+    ],
+    "obstacles": null,
+    "random_obst": true,
+    "robot_start": [
+      1.0,
+      1.0
+    ],
+    "goal_pos": [
+      8.5,
+      8.5
+    ],
+    "max_step": 1000,
+    "n_lidar_rays": 16,
+    "lidar_max_range": 5.0,
+    "robot_radius": 0.3,
+    "dt": 0.1,
+    "render_mode": null,
+    "obstacle_mode": "curriculum",
+    "obstacle_mix": null
+  },
+  "observation_shape": [
+    18
+  ],
+  "action_low": [
+    -0.5,
+    -3.1415927410125732
+  ],
+  "action_high": [
+    1.0,
+    3.1415927410125732
+  ],
+  "normalization_scale": [
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    14.142135623730951,
+    3.141592653589793
+  ],
+  "dynamics": {
+    "dt": 0.1,
+    "robot_radius": 0.3
+  },
+  "source_checkpoint": null,
+  "num_episodes": 5000,
+  "max_env_steps": null,
+  "record_every": 500,
+  "log_every": 500,
+  "status": "completed"
+}
