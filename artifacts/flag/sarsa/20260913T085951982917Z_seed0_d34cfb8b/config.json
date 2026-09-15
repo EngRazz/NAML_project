@@ -1,0 +1,65 @@
+{
+  "environment": "flag",
+  "algorithm": "sarsa",
+  "seed": 0,
+  "code_version": {
+    "commit": "cf503375949c963a5ddb5d05fcec82d5f293532c",
+    "dirty": true
+  },
+  "dependencies": {
+    "gymnasium": "1.2.3",
+    "numpy": "2.4.2",
+    "torch": "2.11.0",
+    "matplotlib": "3.10.8",
+    "pygame": "2.6.1",
+    "moviepy": "2.2.1"
+  },
+  "kind": "training",
+  "environment_config": {
+    "grid_size": [
+      10,
+      10
+    ],
+    "max_step": 100,
+    "agent_start": [
+      5,
+      5
+    ],
+    "flag_value": 10,
+    "flag_cells": [
+      [
+        1,
+        2
+      ],
+      [
+        3,
+        7
+      ],
+      [
+        6,
+        1
+      ],
+      [
+        7,
+        8
+      ],
+      [
+        9,
+        4
+      ]
+    ],
+    "render_mode": null
+  },
+  "state_encoding": "complete-tabular-v2",
+  "cutoff_semantics": "bootstrap",
+  "learning_rate": 0.1,
+  "discount": 0.95,
+  "initial_epsilon": 1.0,
+  "epsilon_decay": 0.00018999999999999998,
+  "final_epsilon": 0.05,
+  "num_episodes": 5000,
+  "max_env_steps": null,
+  "record_every": 500,
+  "log_every": 500,
+  "status": "completed"
+}

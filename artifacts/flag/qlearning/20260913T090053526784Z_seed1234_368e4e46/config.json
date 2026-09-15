@@ -1,0 +1,59 @@
+{
+  "environment": "flag",
+  "algorithm": "qlearning",
+  "seed": 1234,
+  "code_version": {
+    "commit": "cf503375949c963a5ddb5d05fcec82d5f293532c",
+    "dirty": true
+  },
+  "dependencies": {
+    "gymnasium": "1.2.3",
+    "numpy": "2.4.2",
+    "torch": "2.11.0",
+    "matplotlib": "3.10.8",
+    "pygame": "2.6.1",
+    "moviepy": "2.2.1"
+  },
+  "kind": "evaluation",
+  "environment_config": {
+    "grid_size": [
+      10,
+      10
+    ],
+    "max_step": 100,
+    "agent_start": [
+      5,
+      5
+    ],
+    "flag_value": 10,
+    "flag_cells": [
+      [
+        1,
+        2
+      ],
+      [
+        3,
+        7
+      ],
+      [
+        6,
+        1
+      ],
+      [
+        7,
+        8
+      ],
+      [
+        9,
+        4
+      ]
+    ],
+    "render_mode": null
+  },
+  "episodes": 1,
+  "checkpoint": {
+    "path": "/Users/anthonymc/Desktop/NAML_project/artifacts/flag/qlearning/20260913T085943978379Z_seed0_85399cae/checkpoints/model.npz",
+    "mode": "evaluation"
+  },
+  "status": "completed"
+}

@@ -9,7 +9,7 @@
 \usepackage[a4paper,margin=2.6cm]{geometry}
 \usepackage{fancyhdr,titlesec,enumitem,parskip}
 \setlength{\parskip}{0.5\baselineskip}
-\setlength{\headheight}{14pt}
+\setlength{\headheight}{22pt}
 \usepackage{amsmath,amssymb,amsthm,bm}
 \usepackage{booktabs,array,tabularx,caption,graphicx,placeins}
 \usepackage[table]{xcolor}
@@ -57,7 +57,7 @@
 % Arguments: filename, description of expected panels, caption, label.
 % The fallback is deliberately visible; it does not imply an experiment ran.
 \newcommand{\trainingfigure}[4]{%
-  \begin{figure}[tbp]
+  \begin{figure}[h!]
   \centering
   \IfFileExists{figures/#1}{%
     \includegraphics[width=\linewidth,height=0.66\textheight,keepaspectratio]{figures/#1}%
@@ -109,8 +109,6 @@
 This project studies reinforcement learning (RL) in three implemented environments: a grid in which an agent collects flags, a cliff-walking grid in which exploratory mistakes are expensive, and a continuous navigation simulator for a differential-drive robot with LiDAR. The two grids use tabular Q-learning and SARSA. The robot uses Deep Deterministic Policy Gradient (DDPG), Twin Delayed DDPG (TD3), and Soft Actor-Critic (SAC).
 
 The environments address complementary questions. Flag collection requires the agent to distinguish otherwise identical positions according to which objectives remain. Cliff walking exposes the difference between learning about a greedy target policy and learning about the policy actually used for exploration. Continuous navigation introduces continuous actions, neural approximation, limited observations, and obstacle avoidance. Across these tasks, the report connects update equations and theoretical guarantees to the actual implementation and available experimental evidence.
-
-The implementation descriptions refer to the corrected environment and agent source files and their current training entry points. The continuous training analysis uses completed DDPG and SAC runs from 10 September 2026 and a TD3 run after hyperparameter tuning on 13 September 2026; the discrete analysis uses completed Q-learning and SARSA runs in both grids from 13 September 2026. Figures and numerical claims are tied to saved configurations and episode metrics. The four grid checkpoints also have saved greedy evaluations. The historical three-agent fixed-map robot benchmark is retained separately and does not evaluate the newly trained continuous policies. Current DDPG and TD3 evaluation logs provide additional limited evidence. These are individual-run case studies; the planned comparison across independent training seeds has not been performed. The separate moving-obstacle prototype and introductory Gymnasium notebooks are outside the three-environment comparison.
 
 \subsection{MDPs, observations, and return}
 
@@ -219,15 +217,15 @@ Both training scripts use a constant learning rate $\alpha=0.1$ and a finite bud
 \subsubsection{Recorded discrete experiments}
 \label{sec:discrete-protocol}
 
-The four discrete training runs analyzed here completed on 13 September 2026, each with seed 0 and 5,000 episodes. They are the latest completed training runs for their environment and algorithm, selected by timestamp rather than performance. Their saved settings match the configurations described below: learning rate 0.1, discounts 0.95 for flag collection and 0.99 for cliff walking, and external cutoffs of 100 and 200 steps respectively. Metadata identifies \code{complete-tabular-v2} state encoding and bootstrapping at cutoffs. The source directories are:
+The four discrete training runs analyzed here used seed 0 and 5,000 episodes. They are the latest completed training runs for their environment and algorithm. Their saved settings match the configurations described below: learning rate 0.1, discounts 0.95 for flag collection and 0.99 for cliff walking, and external cutoffs of 100 and 200 steps respectively. Metadata identifies \code{complete-tabular-v2} state encoding and bootstrapping at cutoffs. The source directories are:
 \begin{itemize}
- \item Flag Q-learning: \path{artifacts/flag/qlearning/20260913T085943978379Z_seed0_85399cae/}.
- \item Flag SARSA: \path{artifacts/flag/sarsa/20260913T085951982917Z_seed0_d34cfb8b/}.
- \item Cliff Q-learning: \path{artifacts/cliff/qlearning/20260913T084122019817Z_seed0_8fb8d21b/}.
- \item Cliff SARSA: \path{artifacts/cliff/sarsa/20260913T084132538934Z_seed0_52f083d2/}.
+ \item Flag Q-learning: \path{artifacts/flag/qlearning/20260913T085943978379Z_seed0_85399cae/}
+ \item Flag SARSA: \path{artifacts/flag/sarsa/20260913T085951982917Z_seed0_d34cfb8b/}
+ \item Cliff Q-learning:\path{artifacts/cliff/qlearning/20260913T084122019817Z_seed0_8fb8d21b/}
+ \item Cliff SARSA: \path{artifacts/cliff/sarsa/20260913T084132538934Z_seed0_52f083d2/}
 \end{itemize}
 
-\begin{table}[tbp]
+\begin{table}[h!]
 \centering\small
 \begin{tabularx}{\linewidth}{@{}YYr@{}}
 \toprule
@@ -252,7 +250,7 @@ The following figures are exact copies of the saved plots. Smoothing uses up to 
 
 The agent starts at row--column coordinate $(5,5)$ on a $10\times10$ grid. The five flags are placed at $(1,2)$, $(3,7)$, $(6,1)$, $(7,8)$, and $(9,4)$, using zero-based coordinates. Flag positions are fixed; collecting one changes its status until the next reset. There are no internal obstacles in this environment. Attempted movements beyond the boundary are clamped to the nearest valid cell.
 
-\begin{table}[tbp]
+\begin{table}[h!]
 \centering\small
 \begin{tabularx}{\linewidth}{@{}p{3.0cm}Y@{}}
 \toprule
@@ -271,7 +269,7 @@ Encoding & Tuple $(r,c,f_1,\ldots,f_5)$ indexing five Q-values.\\
 
 The collection mask is essential: the best action at a location may change after a nearby flag has already been collected. Position alone would alias these situations. The encoding has at most $100\cdot2^5=3{,}200$ combinations and $16{,}000$ state--action entries; this is a representational bound, not a claim that every combination is reachable. The implementation uses a dictionary of zero-initialized action-value arrays, allocated as states are accessed.
 
-Collecting the final flag terminates on that same transition, with no additional action or step penalty. The rendering countdown from the earlier implementation has been removed from the transition logic. The 100-step limit is an external sampling cutoff rather than a task deadline; no remaining-time variable is required for that cutoff interpretation.
+Collecting the final flag terminates on that same transition, with no additional action or step penalty. The 100-step limit is an external sampling cutoff rather than a task deadline; no remaining-time variable is required for that cutoff interpretation.
 
 \subsubsection{Training and implementation}
 
@@ -281,20 +279,22 @@ The flag runner uses a shared tabular training loop. Q-learning and SARSA are ea
 \end{equation}
 Decay occurs after each episode; the recorded epsilon is the value used during that episode. The default seed is 0, and evaluation selects greedy actions without changing the training exploration setting. Recording is optional: when enabled, a separate greedy demonstration is generated every 500 episodes. Run directories distinguish algorithms and seeds. A single run per algorithm still does not support a confidence interval across independently trained agents.
 
-The SARSA loop selects the initial action before stepping. After a nonterminal transition it selects one next action, passes that action explicitly to \code{update\_SARSA}, and carries it forward for execution. This now follows the standard SARSA trajectory; the former separate resampling inside the update has been removed. The cliff agent uses the same training logic.
+The SARSA loop selects the initial action before stepping. After a non-terminal transition it selects one next action, passes that action explicitly to \code{update\_SARSA}, and carries it forward for execution. This now follows the standard SARSA trajectory; the former separate resampling inside the update has been removed. The cliff agent uses the same training logic.
 
-Both updates mask the bootstrap only on \code{terminated}. A truncated transition retains its continuation value, while either flag stops the rollout. All three main environments use this same external-cutoff interpretation, as discussed in Section~\ref{sec:limits}.
+Both updates mask the bootstrap only on \code{terminated}. A truncated transition retains its continuation value, while either flag stops the roll-out. All three main environments use this same external-cutoff interpretation, as discussed in Section~\ref{sec:limits}.
 
 \subsubsection{Training results and greedy evaluation}
 
 \trainingfigure{GridFlag_training_curves.png}
  {Q-learning: episode return, length, mean absolute TD error and epsilon.}
- {Flag Q-learning, 5,000 episodes with seed 0 and the corrected implementation. Return and length improve as training proceeds and exploration declines. The reward band is rolling mean $\pm$ two rolling standard deviations within this run.}
- {fig:flag-q}
+ {Flag Q-learning, 5,000 episodes with seed 0. Return and length improve as training proceeds and exploration declines. The reward band is rolling mean $\pm$ two rolling standard deviations within this run.}
+{fig:flag-q}
 \trainingfigure{GridFlag_training_curves_SARSA.png}
  {SARSA: episode return, length, mean absolute TD error and epsilon.}
  {Flag SARSA under the same task, episode budget and exploration schedule. Successful collection becomes reliable later in this run than in the Q-learning run; sampled TD errors remain variable even after returns improve.}
  {fig:flag-sarsa}
+
+ \newpage
 
 Figures~\ref{fig:flag-q} and~\ref{fig:flag-sarsa} show a transition from almost uniformly cutoff-limited episodes to shorter, successful collection. During the first 250 episodes neither agent completes the task: both average 100 steps, with mean returns $-33.49$ for Q-learning and $-33.96$ for SARSA. They collect only 1.572 and 1.528 flags per episode on average. By episodes 2,251--2,500, Q-learning completes 228 of 250 episodes (91.2\%), compared with 157 (62.8\%) for SARSA. This establishes earlier reliable collection in the selected Q-learning run, rather than a universal difference in learning speed.
 
@@ -307,7 +307,7 @@ Figures~\ref{fig:flag-q} and~\ref{fig:flag-sarsa} show a transition from almost 
  {Flag SARSA outcomes. Occasional incomplete collections persist later in training, but all final 250 episodes collect every flag. Binary success indicators are not plotted.}
  {fig:flag-sarsa-outcomes}
 
-\begin{table}[tbp]
+\begin{table}[h!]
 \centering\small
 \begin{tabularx}{\linewidth}{@{}Yrrr@{}}
 \toprule
@@ -445,7 +445,7 @@ Greedy evaluation reverses the return ordering (Table~\ref{tab:cliff-evaluation}
 
 \subsection{Environment, dynamics, and observations}
 
-The shared \code{DiffDriveEnv} simulates a circular robot in a $10\times10$ metre room containing axis-aligned rectangular obstacles. In the training notebooks the robot starts at $(1,1)$, initially facing angle zero, and aims for $(8.5,8.5)$. Obstacles remain static within an episode. The robot has radius $0.3$ m and a simulation step of $\Delta t=0.1$ s. The notebook settings override some constructor defaults, notably the goal position and episode horizon.
+The shared \code{DiffDriveEnv} simulates a circular robot in a $10\times10$ metre room containing axis-aligned rectangular obstacles. In the training notebooks the robot starts at $(1,1)$, initially facing angle zero, and aims for $(8.5,8.5)$. Obstacles remain static within an episode. The robot has radius $0.3$ m and a simulation step of $\Delta t=0.1$ s.
 
 The control action is $a_t=(v_t,\omega_t)$, with
 \begin{equation}
@@ -466,7 +466,7 @@ Sixteen evenly spaced LiDAR rays rotate with the robot heading and report distan
  o_t=(\ell_{t,1},\ldots,\ell_{t,16},d_t,\phi_t)\in\R^{18},
  \label{eq:observation}
 \end{equation}
-where $d_t$ is goal distance and $\phi_t\in[-\pi,\pi)$ is the relative goal bearing. Absolute $(x,y)$ coordinates are not included. The two-dimensional action space is continuous; it should not be described as high-dimensional merely because it has infinitely many possible values.
+where $d_t$ is goal distance and $\phi_t\in[-\pi,\pi)$ is the relative goal bearing. Absolute $(x,y)$ coordinates are not included. The action space is two-dimensional and continous.
 
 The full simulator state includes the robot pose and obstacle layout. Sparse finite-range sensing can produce similar observations in different global configurations. The agents use memoryless policies on $o_t$, without a map or recurrent state; describing Eq.~\eqref{eq:observation} as an exactly observed MDP state would therefore be too strong. The observation omits time because the rollout length is an external sampling cutoff; sparse sensing still makes the full simulator state only partially observed.
 
@@ -507,14 +507,14 @@ The final reward and episode flags follow the priority order
  \end{cases}
  \label{eq:terminal-reward}
 \end{equation}
-Terminal rewards replace dense shaping on that step. Reaching the sampling limit without a terminal event produces truncation and the ordinary dense reward: there is no additional timeout penalty. Collision or goal termination takes precedence. The danger-reduction term remains inactive because its coefficient is zero. The selected new training runs record this reward as \code{navigation-cutoff-v2}; the archived historical benchmark belongs to an earlier execution setup.
+Terminal rewards replace dense shaping on that step. Reaching the sampling limit without a terminal event produces truncation and the ordinary dense reward: there is no additional timeout penalty.
 
 Reward design affects which behavior is optimal. The state-dependent progress weight and the additional penalties are not established here as policy-invariant potential-based shaping. Therefore the objective being learned is the complete shaped reward, rather than an independently proven shortest-path or minimum-collision objective.
 
 \subsection{Shared deep-learning implementation}
 \label{sec:deep-implementation}
 
-All three agents are model-free, off-policy actor--critic methods implemented in PyTorch. An actor selects actions and one or more critics estimate action values. Replay buffers retain raw observations, actions, rewards, next observations, and a terminal mask; uniformly sampled minibatches reuse transitions collected by earlier policies. DDPG and TD3 use the NumPy replay buffer, while SAC uses the tensor-based replay buffer. SAC's storage is on the CPU, and sampled batches are moved to the configured device.
+All three agents are model-free, off-policy actor--critic methods implemented in PyTorch. An actor selects actions and one or more critics estimate action values. Replay buffers retain raw observations, actions, rewards, next observations, and a terminal mask; uniformly sampled minibatches reuse transitions collected by earlier policies.
 
 Before network evaluation, the current implementation normalizes LiDAR readings by 5, distance by the room diagonal $\sqrt{10^2+10^2}$, and relative bearing by $\pi$. Thus most components lie in $[0,1]$, and bearing lies in $[-1,1]$. The same transformation is applied when choosing actions and when learning from replay. It is a fixed physical scaling, not a fitted running normalization.
 
@@ -525,14 +525,14 @@ The deterministic actor used by DDPG and TD3 has two fully connected ReLU hidden
 \end{equation}
 DDPG's single critic first processes the observation through a hidden layer, concatenates the action, and applies another hidden layer before the scalar output. TD3 and SAC instead use two independent critics, each taking the concatenated observation and action through two ReLU hidden layers. The network widths are reported in Table~\ref{tab:deep-config}.
 
-Adam optimizers update network parameters. The current constructors set the actor and critic gradient-norm bound to 1.0. Target networks start as copies of the online networks and are updated by
+Adam optimizers update network parameters. Actor and critic gradients are clipped to a global norm of 1.0 before each optimizer step. Target networks start as copies of the online networks and are updated by
 \begin{equation}
  \bar\psi\leftarrow\tau\psi+(1-\tau)\bar\psi,
  \label{eq:polyak}
 \end{equation}
 with the analogous operation for target actors where present. A small $\tau$ slows the target's response to online updates. Replay, target networks, scaling, and clipping are practical stabilization mechanisms; none proves global convergence.
 
-Training begins with uniformly sampled random actions. Learning starts after the warmup threshold and once a minibatch is available. Replay stores only \code{terminated} in its bootstrap mask, while either termination or truncation stops a rollout. Observations are normalized as tensors on the learning device. Action selection disables gradient tracking; critic parameters are frozen during actor optimization while gradients still propagate through critic inputs to the actor. Per-episode loss summaries replace unbounded per-update histories.
+The first 5,000 environment steps use uniformly random actions, and gradient updates begin after this warmup. Only true termination (goal or collision) zeroes the bootstrap term in the targets; reaching the step limit ends the rollout but keeps the continuation value. During the actor update the critic's parameters are held fixed, so the actor learns only through the critic's action gradient.
 
 \subsection{DDPG: deterministic actor and a single critic}
 \label{sec:ddpg}
@@ -558,7 +558,7 @@ The target is held fixed during the critic update. The actor is optimized throug
 
 After warmup, DDPG adds temporally correlated Ornstein--Uhlenbeck (OU) exploration noise to physical actions. The configured noise standard-deviation parameter is 0.2, with each noise component clipped to $[-0.5,0.5]$; the resulting action is then clipped to the environment bounds. The OU state is reset each episode. Evaluation disables this noise.
 
-A single critic can overestimate actions that the actor then exploits. Approximation error, bootstrapping, and off-policy data form the combination commonly called the \emph{deadly triad}~\cite{sutton2018}. An attractive predicted action can be poor in the environment, and changing actor and critic parameters can destabilize each other. DDPG with these nonlinear networks has no general convergence guarantee; even convergence to a local optimum of the true return is not assured. Loss curves must therefore be interpreted alongside navigation outcomes.
+A single critic can overestimate actions that the actor then exploits. Function approximation, bootstrapping, and off-policy data form the combination commonly called the \emph{deadly triad}~\cite{sutton2018}. An attractive predicted action can be poor in the environment, and changing actor and critic parameters can destabilize each other. DDPG with these nonlinear networks has no general convergence guarantee; even convergence to a local optimum of the true return is not assured. Loss curves must therefore be interpreted alongside navigation outcomes.
 
 \subsection{TD3: reducing actor--critic estimation error}
 \label{sec:td3}
@@ -580,7 +580,7 @@ The two critics minimize the sum of their squared errors to this target. On each
 \end{equation}
 The actor uses the first critic, rather than the minimum of both. Both target critics and the target actor are softly updated only on these delayed updates.
 
-The implementation sets $\sigma_{\mathrm{target}}=0.2$, $c=0.5$, and an actor-update delay of two critic updates. Target smoothing acts inside the Bellman target; it is distinct from behavior-policy exploration. This project's TD3 agent uses OU exploration with the same 0.2 scale and 0.5 clipping bound as DDPG, while target smoothing uses Gaussian noise. The selected training run uses one critic update per environment step after warmup, giving one actor/target update every two environment steps under that delay.
+The implementation uses the original paper's smoothing values, $\sigma_{\mathrm{target}}=0.2$ and $c=0.5$, and updates the actor every two critic updates. Target smoothing acts inside the Bellman target and is separate from exploration: unlike the original, which explores with uncorrelated Gaussian noise $\mathcal N(0,0.1)$, this agent uses the same OU exploration as DDPG. With one critic update per environment step, the actor and the three target networks are updated every second step.
 
 The minimum target reduces optimistic errors, delay gives the critics additional updates before the actor changes, and smoothing discourages exploitation of narrow erroneous value peaks. These mechanisms can improve stability, but the minimum can also introduce underestimation and the critics can have correlated errors. TD3 does not remove approximation error or provide a general proof of convergence to an optimal navigation policy.
 
@@ -637,14 +637,14 @@ Gradients for the policy flow through reparameterized actions. Automatic entropy
  L_\beta=-\E\left[\beta\,\operatorname{stopgrad}
        (\log\pi_\theta(a\mid z)+\mathcal H_{\mathrm{target}})\right].
 \end{equation}
-This is the log-temperature loss used in the code. The target critics are softly updated after each learning update. A stochastic policy and twin critics provide mechanisms for exploration and reduced overestimation, but they do not establish that SAC will outperform the other agents on this project. The temperature also need not decrease monotonically during learning.
+This is the log-temperature loss used in the code. The target critics are softly updated after each learning update. A stochastic policy and twin critics provide mechanisms for exploration and reduced overestimation. The temperature also need not decrease monotonically during learning.
 
 \subsection{Training configuration and comparison protocol}
 \label{sec:protocol}
 
 Table~\ref{tab:deep-config} records the settings saved with the three completed runs analyzed below. The active training notebooks expose environment and agent parameters directly, so DDPG, TD3 and SAC can be configured independently. Each run's \code{config.json} is an automatic snapshot of the effective settings, not a shared input configuration that overrides the notebook.
 
-\begin{table}[tbp]
+\begin{table}[h!]
 \centering\small
 \begin{tabularx}{\linewidth}{@{}Yrrr@{}}
 \toprule
@@ -684,7 +684,7 @@ SAC uses automatic temperature tuning with learning rate $3\cdot10^{-4}$ and ini
 
 Checkpoints identify architecture, physical input scaling, action bounds, reward version and source configuration. Evaluation and warm-start loading are explicit: a warm start keeps network weights but resets replay, optimizers, exploration, temperature and counters, rather than claiming exact resumption. Missing or incompatible checkpoints are reported as unavailable for comparisons.
 
-\begin{table}[tbp]
+\begin{table}[h!]
 \centering\small
 \begin{tabularx}{\linewidth}{@{}Yrrr@{}}
 \toprule
