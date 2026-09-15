@@ -38,6 +38,5 @@ coverage.xml
 dmypy.json
 .pytype/
 .pyre/
-videos/
 images/
 .ipynb_checkpoints/
