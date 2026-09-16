@@ -18,6 +18,7 @@
 \definecolor{lightbg}{HTML}{F2F6FA}
 \definecolor{greytext}{HTML}{595959}
 \usepackage[colorlinks=true,linkcolor=accent,citecolor=accent,urlcolor=accent2]{hyperref}
+\usepackage{xurl}
 \hypersetup{pdftitle={Reinforcement Learning in Discrete and Continuous Environments},
   pdfsubject={NAML project: environments, algorithms, and experimental analysis}}
 \urlstyle{tt}
@@ -93,6 +94,8 @@
 {\color{greytext}\large Flag collection, cliff walking, and differential-drive navigation}\par
 \vspace{0.4cm}
 {\color{greytext} Mathematical foundations, implementation, and experimental analysis}
+\vfill
+{\color{greytext}\large Anthony Iemmolo, Marco Leonardi, Alessio Timofte\par}
 \vfill
 {\color{greytext} September 2026}
 \end{titlepage}
@@ -241,7 +244,7 @@ Cliff&Q-learning&357,234\\
 \label{tab:discrete-budgets}
 \end{table}
 
-The following figures are exact copies of the saved plots. Smoothing uses up to 100 preceding episodes; reward bands show rolling mean $\pm$ two rolling population standard deviations within one run, not confidence intervals across seeds. Such a band can extend beyond feasible episode returns; it is a dispersion summary, not a bound. Unless another window is stated, final training summaries use episodes 4,751--5,000, a 250-episode block, and therefore differ from plotted 100-episode endpoints. Training measurements include epsilon-greedy exploration and changing policies. Each final checkpoint was evaluated separately for one greedy episode with seed 1234 on its saved fixed task. Configuration records link each evaluation to its checkpoint; exact evaluation and figure paths are listed in \path{Report/figures/README.md}.
+The following figures are exact copies of the saved plots. Smoothing uses up to 100 preceding episodes; reward bands are 95\% bootstrap confidence intervals for the rolling mean, obtained by resampling the episodes inside each window with replacement. They describe how precisely each window average is measured within one run, not how much the outcome would vary across seeds. Unless another window is stated, final training summaries use episodes 4,751--5,000, a 250-episode block, and therefore differ from plotted 100-episode endpoints. Training measurements include epsilon-greedy exploration and changing policies. Each final checkpoint was evaluated separately for one greedy episode with seed 1234 on its saved fixed task. Configuration records link each evaluation to its checkpoint; exact evaluation and figure paths are listed in \path{Report/figures/README.md}.
 
 \subsection{Flag collection environment}
 \label{sec:flag}
@@ -285,11 +288,11 @@ Both updates mask the bootstrap only on \code{terminated}. A truncated transitio
 
 \subsubsection{Training results and greedy evaluation}
 
-\trainingfigure{GridFlag_training_curves.png}
+\trainingfigure{GridFlag_training_curves_qlearning_bootstrap.png}
  {Q-learning: episode return, length, mean absolute TD error and epsilon.}
- {Flag Q-learning, 5,000 episodes with seed 0. Return and length improve as training proceeds and exploration declines. The reward band is rolling mean $\pm$ two rolling standard deviations within this run.}
+ {Flag Q-learning, 5,000 episodes with seed 0. Return and length improve as training proceeds and exploration declines. The shaded band is a 95\% bootstrap confidence interval for the rolling mean.}
 {fig:flag-q}
-\trainingfigure{GridFlag_training_curves_SARSA.png}
+\trainingfigure{GridFlag_training_curves_sarsa_bootstrap.png}
  {SARSA: episode return, length, mean absolute TD error and epsilon.}
  {Flag SARSA under the same task, episode budget and exploration schedule. Successful collection becomes reliable later in this run than in the Q-learning run; sampled TD errors remain variable even after returns improve.}
  {fig:flag-sarsa}
@@ -298,11 +301,11 @@ Both updates mask the bootstrap only on \code{terminated}. A truncated transitio
 
 Figures~\ref{fig:flag-q} and~\ref{fig:flag-sarsa} show a transition from almost uniformly cutoff-limited episodes to shorter, successful collection. During the first 250 episodes neither agent completes the task: both average 100 steps, with mean returns $-33.49$ for Q-learning and $-33.96$ for SARSA. They collect only 1.572 and 1.528 flags per episode on average. By episodes 2,251--2,500, Q-learning completes 228 of 250 episodes (91.2\%), compared with 157 (62.8\%) for SARSA. This establishes earlier reliable collection in the selected Q-learning run, rather than a universal difference in learning speed.
 
-\trainingfigure{GridFlag_outcomes.png}
+\trainingfigure{GridFlag_outcomes_qlearning_bootstrap.png}
  {Q-learning: rolling goal-completion rate and per-episode flags collected.}
  {Flag Q-learning outcomes. The upper panel averages full-task completion over up to 100 episodes; the lower panel counts flags collected in each episode. Both distinguish partial collection from completing all five flags.}
  {fig:flag-q-outcomes}
-\trainingfigure{GridFlag_outcomes_SARSA.png}
+\trainingfigure{GridFlag_outcomes_sarsa_bootstrap.png}
  {SARSA: rolling goal-completion rate and per-episode flags collected.}
  {Flag SARSA outcomes. Occasional incomplete collections persist later in training, but all final 250 episodes collect every flag. Binary success indicators are not plotted.}
  {fig:flag-sarsa-outcomes}
@@ -393,9 +396,9 @@ Under greedy evaluation, exploratory falls disappear, so the comparison can favo
 
 \subsubsection{Training results and the exploration tradeoff}
 
-\trainingfigure{cliff_qlearning_vs_sarsa.png}
+\trainingfigure{cliff_qlearning_vs_sarsa_bootstrap.png}
  {Q-learning versus SARSA: training return, success rate and episode length, smoothed over up to 100 episodes.}
- {Cliff training comparison from the two completed 5,000-episode, seed-0 runs. SARSA achieves less negative training returns. Both eventually reach the goal reliably, while Q-learning has shorter late-training episodes but pays more cliff-fall penalties. The curves are rolling means, with no uncertainty bands across training seeds.}
+ {Cliff training comparison from the two completed 5,000-episode, seed-0 runs. SARSA achieves less negative training returns. Both eventually reach the goal reliably, while Q-learning has shorter late-training episodes but pays more cliff-fall penalties. The curves are rolling means with 95\% bootstrap confidence intervals computed within each run; they show no variation across training seeds.}
  {fig:cliff}
 
 Figure~\ref{fig:cliff} provides empirical evidence for the predicted training-policy distinction. During the first 250 episodes, both agents reach the goal only four times (1.6\%) and use almost the entire 200-step cutoff on average. Mean returns are $-1697.10$ for Q-learning and $-1413.49$ for SARSA. SARSA's return improves sooner in the plotted run, while the success curves eventually approach one for both agents. Every episode in the final 2,000-episode exploration-floor phase completes successfully, yet their returns remain separated.
@@ -639,7 +642,7 @@ Gradients for the policy flow through reparameterized actions. Automatic entropy
 \end{equation}
 This is the log-temperature loss used in the code. The target critics are softly updated after each learning update. A stochastic policy and twin critics provide mechanisms for exploration and reduced overestimation. The temperature also need not decrease monotonically during learning.
 
-\subsection{Training configuration and comparison protocol}
+\subsection{Training setup}
 \label{sec:protocol}
 
 Table~\ref{tab:deep-config} records the settings saved with the three completed runs analyzed below. The active training notebooks expose environment and agent parameters directly, so DDPG, TD3 and SAC can be configured independently. Each run's \code{config.json} is an automatic snapshot of the effective settings, not a shared input configuration that overrides the notebook.
@@ -701,37 +704,32 @@ SAC&673,498&1,336,998&1,336,998\\
 
 Equal episode counts do not imply equal sample or optimization budgets. DDPG and the selected TD3 run collect similar numbers of transitions but perform different numbers of actor updates; SAC has a shorter episode budget but a larger cutoff and a smaller network. Discounts, target update speeds, replay capacities, behavior policies and update frequencies also differ. Table~\ref{tab:actual-budgets} therefore describes the resources consumed by these individual experiments, not a controlled test of algorithm efficiency.
 
-The optional controlled-comparison workflow uses training seeds 0--4, a common budget of 1.5 million environment steps per agent, and a 1,000-step sampling cutoff. It stores the same 51 evaluation scenarios for all agents: the historical fixed map and 50 mixture-generated layouts with seeds 10000--10049. These additional layouts come from the same proposal families, not a claimed out-of-distribution test. Agent-specific widths and optimizer settings remain explicit, and actual critic and actor update counts are recorded. Aggregation reports variation across training seeds separately from within-run variability. This full controlled comparison has not been run for the report.
+%The optional controlled-comparison workflow uses training seeds 0--4, a common budget of 1.5 million environment steps per agent, and a 1,000-step sampling cutoff. It stores the same 51 evaluation scenarios for all agents: the historical fixed map and 50 mixture-generated layouts with seeds 10000--10049. These additional layouts come from the same proposal families, not a claimed out-of-distribution test. Agent-specific widths and optimizer settings remain explicit, and actual critic and actor update counts are recorded. Aggregation reports variation across training seeds separately from within-run variability. This full controlled comparison has not been run for the report.
 
-Earlier runs used separate greedy demonstration videos reduced to at most 320 pixels wide. The current recorder preserves native resolution up to 800 pixels wide and uses filtered resizing for larger frames, avoiding the thin grid lines lost by the earlier pixel-skipping method. Cliff recordings retain their native $800\times250$ resolution. Recordings remain capped at 300 frames. Evaluation continues to termination or truncation after recording stops. Names such as \code{episode\_0.mp4} and \code{episode\_500.mp4} use zero-based training indices, and a demonstration follows the corresponding training episode's updates. Thus video 0 follows the first episode; CSV episode numbers and plot axes count completed episodes from 1. Notebook summaries retain each block of 500 completed episodes above the updating total progress bar.
+%Earlier runs used separate greedy demonstration videos reduced to at most 320 pixels wide. The current recorder preserves native resolution up to 800 pixels wide and uses filtered resizing for larger frames, avoiding the thin grid lines lost by the earlier pixel-skipping method. Cliff recordings retain their native $800\times250$ resolution. Recordings remain capped at 300 frames. Evaluation continues to termination or truncation after recording stops. Names such as \code{episode\_0.mp4} and \code{episode\_500.mp4} use zero-based training indices, and a demonstration follows the corresponding training episode's updates. Thus video 0 follows the first episode; CSV episode numbers and plot axes count completed episodes from 1. Notebook summaries retain each block of 500 completed episodes above the updating total progress bar.
 
 \subsection{Training results and interpretation}
 \label{sec:continuous-results}
 
-The nine figures in this subsection are copied without alteration from the three completed corrected-code runs identified in Section~\ref{sec:protocol}. Their measurements are training outcomes under exploration: DDPG and TD3 use OU noise after warmup, whereas SAC samples its stochastic policy. They are not greedy evaluation curves or repeated measurements of only the final checkpoint. Numerical claims below are recomputed from the corresponding episode CSVs.
+The nine figures in this subsection come from the three training runs identified in Section~\ref{sec:protocol}. Their measurements are outcomes under exploration: DDPG and TD3 use OU noise after warmup, whereas SAC samples its stochastic policy. They are not greedy evaluation curves or repeated measurements of only the final checkpoint. Numerical claims below are recomputed from the corresponding episode CSVs.
 
-The figures use rolling windows of up to 100 episodes. For completed-episode count $e$, let $n_e=\min(100,e)$. The reward mean and population standard deviation are
-\begin{equation}
- \bar G_e=\frac1{n_e}\sum_{i=e-n_e+1}^{e}G_i,\qquad
- s_e=\sqrt{\frac1{n_e}\sum_{i=e-n_e+1}^{e}(G_i-\bar G_e)^2}.
-\end{equation}
-All three reward plots shade $\bar G_e\pm2s_e$. This is within-run variability, not a confidence interval across independent training seeds; the band may extend beyond the observed return range. Success curves average the binary goal-completion flags over the same windows. Individual success and collision indicators are not drawn. Losses are episode averages over the updates performed during that episode, with missing values when no update occurred.
+The return, length and loss curves use a rolling window of 50 episodes, and the success-rate and distance curves use up to 100. Around each rolling mean, the shaded band is a 95\% bootstrap confidence interval: the episodes inside the window are resampled with replacement, and the band spans the central 95\% of the resampled means. It measures how precisely the window average is determined from a finite number of noisy episodes, covering the sampled layouts and the exploration noise of this run. It does not cover training randomness: initialization, the exploration sequence and the replay order were drawn once, so estimating their effect requires independent training seeds (Section~\ref{sec:limits}). Success curves average the binary goal-completion flags over 100-episode windows and carry the same interval.
 
-The separate square distance plots show the distance at the end of every episode, including both successes and failures. Their 0--10 m vertical range is a display choice, not a bound on the room diagonal. Triangles at the top mark episodes whose final distance exceeds 10 m; the rolling mean and reported statistics use the original, unclipped values. Unless explicitly described as a plotted rolling value, the numerical summaries in the text and Table~\ref{tab:training-summaries} use the preceding \emph{250} episodes. This distinction matters when comparing a quoted number with the endpoint of a plotted 100-episode curve.
+The separate square distance plots show the distance at the end of every episode, including both successes and failures. The vertical axis spans the observed range, at most 11.6 m; the room diagonal is 14.1 m. Unless explicitly described as a plotted rolling value, the numerical summaries in the text and Table~\ref{tab:training-summaries} use the preceding \emph{250} episodes. This distinction matters when comparing a quoted number with the endpoint of a plotted 100-episode curve.
 
 \subsubsection{DDPG: strong improvement with temporary regressions}
 
-\trainingfigure{ddpg_training_curves.png}
+\trainingfigure{ddpg_training_curves_bootstrap.png}
  {DDPG episode return, episode length, critic loss and actor loss.}
- {Selected DDPG run over 5,000 completed episodes. Return and length show individual episodes and rolling means over up to 100 episodes. The reward band is rolling mean $\pm$ two rolling standard deviations within this run. Actor and critic losses are episode-averaged optimization diagnostics.}
+ {Selected DDPG run over 5,000 completed episodes. Return and length show individual episodes and rolling means over 50 episodes. Shaded bands are 95\% bootstrap confidence intervals for the rolling means. Actor and critic losses are episode-averaged optimization diagnostics.}
  {fig:ddpg-training}
-\trainingfigure{ddpg_outcomes.png}
+\trainingfigure{ddpg_success_rate_bootstrap.png}
  {DDPG rolling goal-completion rate.}
  {DDPG success rate over up to 100 recent training episodes. Success is determined by goal completion, independently of the sign of the shaped return. The final plotted value is 82\%, whereas the final 250-episode success fraction is 85.2\%.}
  {fig:ddpg-outcomes}
-\trainingfigure{ddpg_final_goal_distance.png}
+\trainingfigure{ddpg_final_goal_distance_bootstrap.png}
  {DDPG final goal distance and its rolling mean.}
- {DDPG final goal distance in metres for all training episodes, with a rolling mean over up to 100 episodes. Twenty-five episodes exceed the displayed 10 m limit and are marked at the upper edge. The mean is computed from unclipped distances.}
+ {DDPG final goal distance in metres for all training episodes, with a rolling mean over up to 100 episodes and its 95\% bootstrap confidence interval. The vertical axis spans the full range of observed distances (maximum 11.5 m).}
  {fig:ddpg-distance}
 
 DDPG improves substantially after a difficult initial phase. Mean return over episodes 1--250 is $-104.65$, with 24.8\% success and mean final distance 5.02 m. Over the 250 episodes ending at episode 1,000, return is 21.81 and success is 65.2\%; at episode 2,000, they reach 103.32 and 85.6\%. The final-distance curve and the declining mean episode length support the interpretation that the agent increasingly reaches the goal in shorter trajectories.
@@ -745,53 +743,53 @@ The actor loss approaches roughly $-100$ while the critic loss remains nonzero a
 
 \subsubsection{TD3: improved navigation after hyperparameter tuning}
 
-Following the initial TD3 run, the critic learning rate was reduced from $10^{-3}$ to $3\cdot10^{-4}$ and critic updates per environment step from two to one. A fresh 5,000-episode run retained seed 0, the task and the other recorded agent settings, raising final-block training success from 53.2\% to 88.8\%. The two changes were tested together, so this comparison does not isolate their individual effects.
+Following an initial TD3 run, the critic learning rate was reduced from $10^{-3}$ to $3\cdot10^{-4}$ and critic updates per environment step from two to one. A fresh 5,000-episode run retained seed 0, the task and the other recorded agent settings, raising final-block training success from 53.2\% to 88.8\%. The two changes were tested together, so this comparison does not isolate their individual effects.
 
-\trainingfigure{td3_training_curves.png}
+\trainingfigure{td3_training_curves_bootstrap.png}
  {TD3 episode return, episode length, critic loss and actor loss.}
- {TD3 after tuning, over 5,000 completed episodes. Rolling return increases and episode length decreases, with remaining failed episodes. The reward band is rolling mean $\pm$ two rolling standard deviations within this run; actor and critic losses are optimization diagnostics.}
+ {TD3 after tuning, over 5,000 completed episodes. Rolling return increases; episode length first rises, peaking near episode 400, then falls. Shaded bands are 95\% bootstrap confidence intervals for the rolling means; actor and critic losses are optimization diagnostics.}
  {fig:td3-training}
-\trainingfigure{td3_outcomes.png}
+\trainingfigure{td3_success_rate_bootstrap.png}
  {TD3 rolling goal-completion rate.}
  {TD3 success over up to 100 recent training episodes. After early improvement, the rate is generally near 90\%, with temporary regressions. The final 100-episode value is 89\%; the final 250-episode fraction is 88.8\%.}
  {fig:td3-outcomes}
-\trainingfigure{td3_final_goal_distance.png}
+\trainingfigure{td3_final_goal_distance_bootstrap.png}
  {TD3 final goal distance and its rolling mean.}
- {TD3 final goal distance. The rolling mean falls toward approximately 1 m, while occasional failures end farther from the goal. Forty-four episodes exceed 10 m and are marked at the upper edge; their full values remain in the mean.}
+ {TD3 final goal distance. The rolling mean falls toward approximately 1 m, while occasional failures end farther from the goal. The vertical axis spans the full range of observed distances (maximum 11.6 m).}
  {fig:td3-distance}
 
 The revised run shows substantial learning. Mean return rises from $-89.74$ in episodes 1--250 to 79.52 in the window ending at episode 1,000, while success increases from 29.6\% to 79.2\% and mean final distance decreases from 4.85 m to 1.63 m. The window ending at episode 3,000 reaches mean return 141.79 and success 93.6\%. The curves are not monotonic: success drops to 78.8\% over episodes 4,501--4,750 before recovering in the final block.
 
-The final 250 episodes have mean return 128.22, mean length 194.29 steps and mean final distance 1.00 m. They contain 222 successes, 13 collisions and 15 cutoffs, giving 88.8\% success and 6.0\% cutoffs. This supports much more reliable navigation than the earlier run, while retaining measurable failures. The shorter 100-episode endpoint has mean return 130.54 and success 89\%.
+The final 250 episodes have mean return 128.22, mean length 194.29 steps and mean final distance 1.00 m. They contain 222 successes, 13 collisions and 15 cutoffs, giving 88.8\% success and 6.0\% cutoffs. This supports much more reliable navigation than the earlier run, while retaining measurable failures. Over the final 100 episodes, mean return is 130.54 and success 89\%.
 
-The earlier extreme mid-training critic-loss spike is absent from these plots, but critic loss remains nonzero and increases in parts of training despite improved task performance. Actor loss also changes direction late in the run. Neither curve alone establishes value accuracy or convergence; the navigation outcomes and the separate greedy evaluations below provide the practical evidence.
+In the initial run the critic loss spiked to about 3,700 near episode 2,530; after tuning it stays below 63 from episode 500 onward. It still remains nonzero and increases in parts of training despite improved task performance. Actor loss also changes direction late in the run. Neither curve alone establishes value accuracy or convergence; the navigation outcomes and the separate greedy evaluations below provide the practical evidence.
 \FloatBarrier
 
 \subsubsection{SAC: rapid early improvement and adaptive temperature}
 
-\trainingfigure{sac_training_curves.png}
+\trainingfigure{sac_training_curves_bootstrap.png}
  {SAC episode return, episode length, critic loss and actor loss.}
- {Selected normalized-input SAC run over 3,000 completed episodes. Return and length have rolling means over up to 100 episodes; the reward band describes two rolling standard deviations within this run. The losses are episode averages and need not decrease monotonically as the policy and targets change.}
+ {SAC run over 3,000 completed episodes. Return and length have rolling means with 95\% bootstrap confidence intervals. The losses are episode averages and need not decrease monotonically as the policy and targets change.}
  {fig:sac-training}
-\trainingfigure{sac_outcomes.png}
- {SAC rolling goal-completion rate and entropy temperature.}
- {SAC rolling success rate and logged temperature $\alpha$. The temperature trace shows episode averages over learning updates, or the current value before learning begins. It is a temperature parameter, not a direct entropy measurement. The final 100-episode success rate is 79\%.}
+\trainingfigure{sac_success_rate_bootstrap.png}
+ {SAC rolling goal-completion rate.}
+ {SAC rolling success rate with its 95\% bootstrap confidence interval. The final 100-episode success rate is 79\%.}
  {fig:sac-outcomes}
-\trainingfigure{sac_final_goal_distance.png}
+\trainingfigure{sac_final_goal_distance_bootstrap.png}
  {SAC final goal distance and its rolling mean.}
- {SAC final distance for all training episodes, with a rolling mean over up to 100 episodes and a horizontal span of 3,000 episodes. Fifteen values exceed the 10 m display limit and are marked at the upper edge. Unclipped distances determine the mean.}
+ {SAC final distance for all training episodes, with a rolling mean over up to 100 episodes and a horizontal span of 3,000 episodes. The vertical axis spans the full range of observed distances (maximum 11.3 m).}
  {fig:sac-distance}
 
-SAC now has a complete normalized-input training record. Over episodes 1--250, mean return is $-83.62$, success is 38.4\%, and mean final distance is 4.40 m. By the window ending at episode 1,000, mean return reaches 138.67, success is 90.4\%, mean length is 148.31 steps and mean final distance is 0.93 m. The pronounced rise in success around episodes 450--700 accompanies a reduction in both distance and episode length. This is faster early improvement on the episode axis than in the selected DDPG and TD3 runs, but different horizons, networks and update budgets prevent treating it as a controlled efficiency comparison.
+ Over episodes 1--250, mean return is $-83.62$, success is 38.4\%, and mean final distance is 4.40 m. By the window ending at episode 1,000, mean return reaches 138.67, success is 90.4\%, mean length is 148.31 steps and mean final distance is 0.93 m. The pronounced rise in success around episodes 450--700 accompanies a reduction in both distance and episode length. This is faster early improvement on the episode axis than in the DDPG and TD3 runs (90.4\% success over the 250 episodes ending at episode 1,000, against 65.2\% and 79.2\%), but different horizons, networks and update budgets prevent treating it as a controlled efficiency comparison.
 
 Later performance remains useful but variable. The final 250 episodes yield mean return 106.71, mean length 214.08 steps and mean final distance 1.31 m. They contain 208 successes, 26 collisions and 16 cutoffs: an 83.2\% success rate, below the earlier window ending at episode 1,000. The final 100-episode rate is 79\%. Thus the run supports substantial learning, not monotonically improving performance or failure-free navigation.
 
-The logged temperature starts at 0.2, drops to an episode average of approximately 0.01175 at episode 64, and subsequently rises with fluctuations, ending at approximately 0.07082. This supports the description of automatic adaptation rather than a fixed decay schedule. Critic loss rises during parts of training even while success remains relatively high; actor loss also reverses direction. Neither loss nor temperature alone supplies a navigation ranking. Older SAC evaluation outputs with a different reward scale are excluded from these new training summaries.
+The logged temperature starts at 0.2, drops to an episode average of approximately 0.01175 at episode 64, and subsequently rises with fluctuations, ending at approximately 0.07082. This supports the description of automatic adaptation rather than a fixed decay schedule. Critic loss rises during parts of training even while success remains relatively high; actor loss also reverses direction. Neither loss nor temperature alone supplies a navigation ranking.
 \FloatBarrier
 
 \subsubsection{Comparison of the selected training runs}
 
-\begin{table}[tbp]
+\begin{table}[h!]
 \centering\small
 \begin{tabularx}{\linewidth}{@{}Yrrrrr@{}}
 \toprule
@@ -820,7 +818,7 @@ The archived comparison notebook evaluates all three agents on the same room, st
 \]
 The horizon is 1,000 steps. DDPG and TD3 disable exploration noise; SAC uses the transformed Gaussian mean. Table~\ref{tab:fixed-benchmark} transcribes the retained output of this notebook rather than a new evaluation of the local checkpoints.
 
-\begin{table}[tbp]
+\begin{table}[h!]
 \centering\small
 \begin{tabularx}{\linewidth}{@{}Yrrrr@{}}
 \toprule
@@ -837,19 +835,26 @@ SAC&164.17&128&0.46&3/3\\
 
 All three saved policies reach the goal on this map. TD3 uses fewer steps in this particular comparison, and the return differences are small. The reward includes progress, orientation, obstacle proximity, time, and turning terms, so return is not solely a path-length measure. Repeated identical deterministic rollouts validate consistency on that map; they are not three independent training runs and do not demonstrate generalization across layouts or initial conditions.
 
-These outputs belong to the archived comparison notebook and must not be used to rank the newly trained checkpoints shown in Section~\ref{sec:continuous-results}. A new three-agent comparison would require evaluating those selected checkpoints on the same scenarios and reward version. A broader ranking additionally requires diverse held-out maps and independent training replications.
+These outputs belong to the archived comparison notebook and must not be used to rank the newly trained checkpoints shown in Section~\ref{sec:continuous-results}. The current checkpoints are evaluated below on this same map and on ten sampled layouts; a broader ranking would additionally require held-out maps and independent training replications.
 
 \subsubsection{Current DDPG evaluation}
 
 Two completed evaluation records explicitly identify the selected new DDPG checkpoint. On the fixed map above, the deterministic policy reaches the goal in 116 steps with return 168.01 and final distance 0.455 m. In a separate sample of ten mixture-generated layouts, using seeds 1234--1243, it succeeds eight times, collides once and reaches the cutoff once. Mean return is 101.56, mean length 192.7 steps and mean final distance 1.73 m over all ten episodes. The two failures are included in these averages.
 
-The records are \path{20260910T181054240654Z_seed1234_93ca9597/} and \path{20260910T181054354166Z_seed1234_ce4ec2e7/} beneath \path{artifacts/continuous/ddpg/}. They support useful greedy behavior on a small sample from the implemented scenario families, not broad generalization or a comparison across independent training seeds.
+The records are the runs ending in \code{93ca9597} and \code{ce4ec2e7} beneath \path{artifacts/continuous/ddpg/}. They support useful greedy behavior on a small sample from the implemented scenario families, not broad generalization or a comparison across independent training seeds.
 
 \subsubsection{Current TD3 evaluation}
 
 The tuned TD3 checkpoint reaches the fixed-map goal in 127 steps, with return 167.09 and final distance 0.432 m. On ten mixture-generated layouts with seeds 1234--1243, it succeeds nine times, reaches the cutoff once and has no collisions. Across all ten episodes, including the failure, mean return is 135.17, mean length is 206.5 steps and mean final distance is 1.04 m. The remaining failure reaches the 1,000-step cutoff 6.36 m from the goal.
 
-These completed records are \path{20260913T131252423944Z_seed1234_be0e9c73/} and \path{20260913T131254673271Z_seed1234_dd1e83d8/} beneath \path{artifacts/continuous/td3/}. Both explicitly reference the selected tuned checkpoint and disable exploration noise. They confirm successful greedy navigation on the fixed map and most sampled layouts, without establishing failure-free control or an algorithm ranking from this small sample.
+These completed records are the runs ending in \code{be0e9c73} and \code{dd1e83d8} beneath \path{artifacts/continuous/td3/}. Both explicitly reference the selected tuned checkpoint and disable exploration noise. They confirm successful greedy navigation on the fixed map and most sampled layouts, without establishing failure-free control or an algorithm ranking from this small sample.
+
+\subsubsection{Current SAC evaluation}
+
+The SAC checkpoint reaches the fixed-map goal in 118 steps, with return 171.51 and final distance 0.453 m. On ten mixture-generated layouts with seeds 1234--1243, it succeeds nine times, reaches the cutoff once and has no collisions. Across all ten episodes, including the failure, mean return is 135.10, mean length is 201.7 steps and mean final distance is 0.91 m. The remaining failure reaches the 1,000-step cutoff 5.02 m from the goal, on the same layout where DDPG and TD3 also reach the cutoff.
+
+These completed records are the runs ending in \code{58c65ad1} and \code{1876b453} beneath \path{artifacts/continuous/sac/}. Both reference the selected SAC checkpoint and use the deterministic mean action, with the same 1,000-step cutoff as the other evaluations, although SAC was trained with a 1,200-step cutoff. They confirm successful greedy navigation on the fixed map and most sampled layouts, without establishing failure-free control or an algorithm ranking from this small sample.
+
 \FloatBarrier
 
 \section{Discussion and limitations}
@@ -859,7 +864,7 @@ These completed records are \path{20260913T131252423944Z_seed1234_be0e9c73/} and
 
 The experiments link two different reasons for algorithm choice. In the grids, finite encodings make independent tabular values practical. In the robot environment, continuous observations and actions motivate shared neural representations and an actor to select actions without enumerating them. Parameter sharing permits generalization to unseen inputs, but it can also transfer errors between inputs; useful generalization is an empirical property, not an automatic consequence of using a network.
 
-\begin{table}[tbp]
+\begin{table}[h!]
 \centering\small
 \begin{tabularx}{\linewidth}{@{}p{1.8cm}YY@{}}
 \toprule
@@ -872,7 +877,7 @@ DDPG&Single critic, deterministic actor, OU exploration.&The exact deterministic
 SAC&Stochastic actor, twin critics, entropy objective and learned temperature.&Exact soft policy iteration has an idealized guarantee; that guarantee does not transfer to approximate neural training.\\
 \bottomrule
 \end{tabularx}
-\caption{Comparison of all five algorithms in the corrected implementation. Both tabular SARSA agents carry the backup action forward.}
+\caption{Comparison of all five algorithms.}
 \label{tab:algorithm-summary}
 \end{table}
 
@@ -886,13 +891,13 @@ The robot no longer adds a separate timeout penalty, so the observation's omissi
 
 \subsection{Experimental evidence and reproducibility}
 
-The available evidence supports case studies rather than a statistically controlled ranking. The report includes one selected completed training run for each algorithm in each applicable environment, all with seed 0 and saved configuration metadata and episode logs: four tabular runs and three continuous runs. Both flag agents complete every final-block episode and achieve 27-step greedy collection. Cliff SARSA has fewer training falls and better exploratory return, while Q-learning has the shorter greedy route. All three selected continuous runs show substantial learning; TD3's revised settings improve the observed outcome relative to its initial run. Each grid checkpoint has one saved fixed-task greedy evaluation; the reported DDPG and TD3 checks also cover the fixed map and ten sampled layouts.
+The available evidence supports case studies rather than a statistically controlled ranking. The report includes one selected completed training run for each algorithm in each applicable environment, all with seed 0 and saved configuration metadata and episode logs: four tabular runs and three continuous runs. Both flag agents complete every final-block episode and achieve 27-step greedy collection. Cliff SARSA has fewer training falls and better exploratory return, while Q-learning has the shorter greedy route. All three selected continuous runs show substantial learning; TD3's revised settings improve the observed outcome relative to its initial run. Each grid checkpoint has one saved fixed-task greedy evaluation; the three continuous checkpoints are also checked on the fixed map and ten sampled layouts.
 
-Current source code, notebook configuration cells, old outputs and checkpoints can describe different execution histories. The training descriptions are tied to saved run metadata rather than inferred from notebook settings alone. The selected training records mark the working tree as modified; a commit identifier alone therefore cannot reconstruct every source edit used for a run. The fourteen current images---five discrete and nine continuous---are exact copies of the selected run artifacts. The accompanying figure inventory records their paths, hashes and numerical sources. Four older DDPG/TD3 images remain identifiable historical files but are not the training evidence displayed here.
+Current source code, notebook configuration cells, old outputs and checkpoints can describe different execution histories. The training descriptions are tied to saved run metadata rather than inferred from notebook settings alone. The selected training records mark the working tree as modified; a commit identifier alone therefore cannot reconstruct every source edit used for a run. The fourteen current images---five discrete and nine continuous---are exact copies of the selected run artifacts. The accompanying figure inventory records their paths, hashes and numerical sources.
 
-The current training quantities come from the four discrete \code{metrics.csv} files identified in Section~\ref{sec:discrete-protocol} and the three continuous files identified in Section~\ref{sec:protocol}; cumulative budgets come from their final rows. Discrete evaluation returns come from the saved evaluation CSVs, and route geometry was checked by replaying the selected tables without updates. The separate historical robot benchmark comes from \path{archive/notebooks/Continuous_Diff_Drive/compare_ddpg_sac_td3.ipynb}. A SHA-256 manifest records the preserved original notebooks. Implementation descriptions follow the active environment modules and shared \path{rl_project/} training infrastructure. Archived notebooks document earlier execution histories rather than supported current entry points.
+The current training quantities come from the four discrete \code{metrics.csv} files identified in Section~\ref{sec:discrete-protocol} and the three continuous files identified in Section~\ref{sec:protocol}; cumulative budgets come from their final rows. Discrete evaluation returns come from the saved evaluation CSVs, and route geometry was checked by replaying the selected tables without updates. The separate historical robot benchmark comes from the archived comparison notebook. A SHA-256 manifest records the preserved original notebooks. Implementation descriptions follow the active environment modules and shared \path{rl_project/} training infrastructure. Archived notebooks document earlier execution histories rather than supported current entry points.
 
-The workflow preserves raw episode records, configurations, seeds and checkpoint metadata, and provides the common-scenario, multiple-training-seed experiment described above. Carrying out that full experiment remains future work. Different horizons, networks, discounts, tuning effort and actual update budgets constrain comparisons of the available training curves. In the grids, equal episode budgets also produce different numbers of training transitions. Success on the one fixed flag layout or cliff map does not measure generalization to new tasks. The available single-run data do not establish uncertainty across independent training seeds.
+The workflow preserves raw episode records, configurations, seeds and checkpoint metadata. A controlled comparison across several independent training seeds, with a common step budget and shared evaluation layouts, remains future work. Different horizons, networks, discounts, tuning effort and actual update budgets constrain comparisons of the available training curves. In the grids, equal episode budgets also produce different numbers of training transitions. Success on the one fixed flag layout or cliff map does not measure generalization to new tasks. The available single-run data do not establish uncertainty across independent training seeds.
 
 \section{Conclusions}
 \label{sec:conclusions}
@@ -901,7 +906,7 @@ The project implements three complementary RL tasks and five algorithms. Flag co
 
 Cliff walking demonstrates the practical difference between SARSA and Q-learning in the measured results. With ongoing exploration, SARSA's behavior-policy backup supports a longer route with fewer falls: the final 250 training episodes contain two SARSA falls versus 102 Q-learning falls. Mean training returns are $-26.91$ and $-62.88$ respectively. Under greedy evaluation, Q-learning's 17-step route outperforms SARSA's 23-step detour. The benefit is therefore tied to return during exploration, rather than an unconditional advantage of SARSA.
 
-The continuous environment extends the problem to sensor-based navigation with bounded velocity commands and a shaped reward. The selected DDPG, tuned TD3 and SAC runs reach final 250-episode training success fractions of 85.2\%, 88.8\% and 83.2\%, respectively, with remaining failures. Current DDPG and TD3 evaluations both succeed on the fixed map and complete eight and nine of ten sampled layouts, respectively. These are outcomes of particular configurations and training budgets, not a universal ranking. The archived three-agent benchmark remains historical evidence, separate from the new training results. Broader claims require the full common-scenario experiment and independent training replications.
+The continuous environment extends the problem to sensor-based navigation with bounded velocity commands and a shaped reward. The selected DDPG, tuned TD3 and SAC runs reach final 250-episode training success fractions of 85.2\%, 88.8\% and 83.2\%, respectively, with remaining failures. Current evaluations of the three final checkpoints all reach the goal on the fixed map, and on ten sampled layouts DDPG solves eight while TD3 and SAC solve nine; the same layout defeats all three. These are outcomes of particular configurations and training budgets, not a universal ranking. The archived three-agent benchmark remains historical evidence, separate from the new training results. Broader claims require independent training replications on shared layouts.
 
 The theoretical distinction is between exact operators and the actual sampled, approximate learning procedures. Small finite tables enable strong convergence theorems under explicit assumptions. Exact Bellman contraction can also hold in continuous spaces, but it does not guarantee convergence of the implemented neural agents. Keeping those assumptions, implementation details, and the provenance of experimental results separate produces a more accurate interpretation of both the project's achievements and the evidence still required.
 \FloatBarrier
