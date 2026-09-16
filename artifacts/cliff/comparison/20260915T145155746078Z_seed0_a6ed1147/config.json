@@ -1,0 +1,24 @@
+{
+  "environment": "cliff",
+  "algorithm": "comparison",
+  "seed": 0,
+  "code_version": {
+    "commit": "87e8fcffbb1d1b3b15397dd86a08cfd3609ce4ef",
+    "dirty": true
+  },
+  "dependencies": {
+    "gymnasium": "1.2.3",
+    "numpy": "2.2.6",
+    "torch": "2.11.0",
+    "matplotlib": "3.10.8",
+    "pygame": "2.6.1",
+    "moviepy": "2.2.1"
+  },
+  "kind": "comparison",
+  "source_runs": {
+    "qlearning": "c:\\Users\\39324\\Desktop\\NAML_RL_gym\\artifacts\\cliff\\qlearning\\20260915T145107708840Z_seed0_630db017",
+    "sarsa": "c:\\Users\\39324\\Desktop\\NAML_RL_gym\\artifacts\\cliff\\sarsa\\20260915T145132670752Z_seed0_df131c78"
+  },
+  "window": 100,
+  "status": "completed"
+}
